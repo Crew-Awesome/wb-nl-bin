@@ -1,6 +1,6 @@
 {
     "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
-    "applicationId": "js.neutralino.sample",
+    "applicationId": "com.weekbox.launcher",
     "version": "0.0.1",
     "defaultMode": "window",
     "port": 0,
@@ -40,7 +40,7 @@
     },
     "modes": {
         "window": {
-            "title": "Neutralinojs app",
+            "title": "WeekBox",
             "x": 200,
             "y": 400,
             "center": true,
@@ -60,7 +60,7 @@
             "exitProcessOnClose": false,
             "useSavedState": true,
             "port": 0,
-            "extendUserAgentWith": "NeutralinojsSampleApp",
+            "extendUserAgentWith": "WeekBox",
             "injectGlobals": false,
             "injectClientLibrary": false,
             "emitDropEvents": false,
@@ -84,7 +84,7 @@
         }
     },
     "cli": {
-        "binaryName": "neutralino",
+        "binaryName": "weekbox",
         "resourcesPath": "/resources/",
         "extensionsPath": "/extensions/",
         "clientLibrary": "/resources/js/neutralino.js"

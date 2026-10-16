@@ -11,6 +11,7 @@
 *.neu
 /bin/.tmp
 /bin/neutralino-*
+/bin/weekbox-*
 /bin/resources.neu
 /bin/resources/js/neutralino.*
 /build

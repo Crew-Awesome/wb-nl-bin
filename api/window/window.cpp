@@ -1,7 +1,14 @@
-#include <string>
+#include <chrono>
+#include <condition_variable>
+#include <exception>
+#include <functional>
 #include <iostream>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <regex>
+#include <stdexcept>
+#include <thread>
 
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <type_traits>
@@ -85,11 +92,14 @@ RECT savedRect;
 HMENU windowMenu;
 int windowMenuItemId = ID_MENU_FIRST;
 WNDPROC originalWndProc = nullptr;
+HICON windowIcon = nullptr;
 #endif
 
 window::WindowOptions windowProps;
 bool savedState = false;
 NEU_W_HANDLE windowHandle;
+std::thread::id uiThreadId;
+std::mutex windowLifecycleMutex;
 
 namespace handlers {
 
@@ -631,15 +641,110 @@ void __injectScript() {
     }
 }
 
+struct SynchronousTaskState {
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool completed = false;
+    bool started = false;
+    bool cancelled = false;
+    std::exception_ptr exception;
+};
+
+void dispatchSync(const std::function<void()> &task) {
+    webview::webview *window = nullptr;
+    std::thread::id uiThread;
+    {
+        std::lock_guard<std::mutex> guard(windowLifecycleMutex);
+        window = nativeWindow;
+        uiThread = uiThreadId;
+    }
+    if(!window) {
+        throw std::runtime_error("Native window is not initialized");
+    }
+
+    if(std::this_thread::get_id() == uiThread) {
+        task();
+        return;
+    }
+
+    auto state = std::make_shared<SynchronousTaskState>();
+    auto dispatchTask = [task, state]() {
+        {
+            std::lock_guard<std::mutex> guard(state->mutex);
+            if(state->cancelled) {
+                state->completed = true;
+                state->condition.notify_one();
+                return;
+            }
+            state->started = true;
+        }
+
+        try {
+            task();
+        }
+        catch(...) {
+            std::lock_guard<std::mutex> guard(state->mutex);
+            state->exception = std::current_exception();
+        }
+
+        {
+            std::lock_guard<std::mutex> guard(state->mutex);
+            state->completed = true;
+        }
+        state->condition.notify_one();
+    };
+
+    if(!window->dispatch(dispatchTask)) {
+        std::lock_guard<std::mutex> guard(state->mutex);
+        state->cancelled = true;
+        state->completed = true;
+        state->exception = std::make_exception_ptr(
+            std::runtime_error("Unable to dispatch task to the native UI thread"));
+        state->condition.notify_one();
+    }
+
+    std::unique_lock<std::mutex> lock(state->mutex);
+    while(!state->completed) {
+        if(state->condition.wait_for(lock, std::chrono::seconds(5)) ==
+                std::cv_status::timeout && !state->started) {
+            state->cancelled = true;
+            state->completed = true;
+            state->exception = std::make_exception_ptr(
+                std::runtime_error("Timed out waiting for the native UI thread"));
+            break;
+        }
+    }
+    if(state->exception) {
+        std::rethrow_exception(state->exception);
+    }
+}
+
 
 bool __createWindow() {
     savedState = windowProps.useSavedState && __loadSavedWindowProps();
 
-    nativeWindow = new webview::webview(windowProps.enableInspector, windowProps.openInspectorOnStartup, 
-        nullptr, windowProps.transparent, windowProps.webviewArgs, windowProps.emitDropEvents);
-    
-    if(nativeWindow->get_init_code() == 1) {
+    #if defined(__linux__) || defined(__FreeBSD__)
+    // Set the process identity before GTK creates the native window. This is
+    // what desktop shells use for the taskbar/Alt-Tab application identity.
+    g_set_prgname(settings::getAppId().c_str());
+    g_set_application_name(windowProps.title.c_str());
+    #endif
+
+    webview::webview *createdWindow = new webview::webview(
+        windowProps.enableInspector, windowProps.openInspectorOnStartup,
+        nullptr, windowProps.transparent, windowProps.webviewArgs,
+        windowProps.emitDropEvents);
+
+    if(createdWindow->get_init_code() == 1) {
+        delete createdWindow;
         return false;
+    }
+
+    // Publish the fully constructed WebView only after its backend is ready.
+    // The server can receive RPCs before the UI enters its event loop.
+    {
+        std::lock_guard<std::mutex> guard(windowLifecycleMutex);
+        nativeWindow = createdWindow;
     }
 
     nativeWindow->set_title(windowProps.title);
@@ -713,8 +818,10 @@ bool __createWindow() {
     if(windowProps.fullScreen)
         window::setFullScreen();
 
-    if(windowProps.icon != "")
-        window::setIcon(windowProps.icon);
+    if(windowProps.icon != "" && !window::setIcon(windowProps.icon)) {
+        debug::log(debug::LogTypeError,
+            errors::makeErrorMsg(errors::NE_WI_UNBSICO, windowProps.icon));
+    }
 
     if(windowProps.alwaysOnTop)
         window::setAlwaysOnTop(true);
@@ -730,32 +837,64 @@ bool __createWindow() {
     return true;
 }
 
-void _close(int exitCode) {
-    if(nativeWindow) {
-        #if defined(__APPLE__)
-        dispatch_sync(dispatch_get_main_queue(), ^{
-		#endif
-        if(windowProps.useSavedState) {
-            __saveWindowProps();
-        }
-        #if defined(_WIN32)
-        if(windowHandle && originalWndProc) {
-            DragAcceptFiles(windowHandle, FALSE);
-            SetWindowLongPtr(windowHandle, GWLP_WNDPROC,
-                             (LONG_PTR)originalWndProc);
-            originalWndProc = nullptr;
-        }
-        #endif
-        nativeWindow->terminate(exitCode);
-		#if defined(__APPLE__)
-		});
-		#endif
-        #if defined(_WIN32)
-        FreeConsole();
-        #endif
-        delete nativeWindow;
-        nativeWindow = nullptr;
+void __closeWindowOnUI(int exitCode) {
+    os::cleanupTray();
+    if(windowProps.useSavedState) {
+        __saveWindowProps();
     }
+    #if defined(_WIN32)
+    if(windowHandle && originalWndProc) {
+        DragAcceptFiles(windowHandle, FALSE);
+        SetWindowLongPtr(windowHandle, GWLP_WNDPROC,
+                         (LONG_PTR)originalWndProc);
+        originalWndProc = nullptr;
+    }
+    if(windowIcon) {
+        SendMessage(windowHandle, WM_SETICON, ICON_SMALL, 0);
+        SendMessage(windowHandle, WM_SETICON, ICON_BIG, 0);
+        DestroyIcon(windowIcon);
+        windowIcon = nullptr;
+    }
+    #endif
+    nativeWindow->terminate(exitCode);
+}
+
+void _close(int exitCode) {
+    {
+        std::lock_guard<std::mutex> guard(windowLifecycleMutex);
+        if(!nativeWindow) {
+            return;
+        }
+    }
+
+    // GTK, Cocoa, Win32 and WebKit objects belong to the UI thread. In
+    // particular, app.exit may arrive from a native worker after RPC
+    // dispatching.
+    dispatchSync([exitCode]() {
+        webview::webview *window = nullptr;
+        {
+            std::lock_guard<std::mutex> guard(windowLifecycleMutex);
+            window = nativeWindow;
+        }
+        if(!window) {
+            return;
+        }
+        __closeWindowOnUI(exitCode);
+        // Destroy the webview object on the same thread that owns its native
+        // toolkit objects. GTK/Cocoa normally terminate the process from the
+        // destroy callback before this line is reached.
+        delete window;
+        {
+            std::lock_guard<std::mutex> guard(windowLifecycleMutex);
+            if(nativeWindow == window) {
+                nativeWindow = nullptr;
+            }
+        }
+    });
+
+    #if defined(_WIN32)
+    FreeConsole();
+    #endif
 }
 
 bool isSavedStateLoaded() {
@@ -967,51 +1106,93 @@ void exitFullScreen() {
     #endif
 }
 
-void setIcon(const string &iconFile) {
+bool setIcon(const string &iconFile) {
+    if(!windowHandle) {
+        return false;
+    }
     fs::FileReaderResult fileReaderResult = resources::getFile(iconFile);
+    if(fileReaderResult.status != errors::NE_ST_OK || fileReaderResult.data.empty()) {
+        return false;
+    }
+
     string iconDataStr = fileReaderResult.data;
     #if defined(__linux__) || defined(__FreeBSD__)
-    GdkPixbuf *icon = nullptr;
-    GdkPixbufLoader *loader;
-    GdkPixbuf *pixbuf;
-    loader = gdk_pixbuf_loader_new();
+    GError *error = nullptr;
+    GdkPixbufLoader *loader = gdk_pixbuf_loader_new();
+    if(!loader) {
+        return false;
+    }
 
-    const char *iconData = iconDataStr.c_str();
-    unsigned char *uiconData = reinterpret_cast <unsigned char *> (const_cast <char *> (iconData));
-    gdk_pixbuf_loader_write(loader, uiconData, iconDataStr.length(), NULL);
-    icon = gdk_pixbuf_loader_get_pixbuf(loader);
-    gtk_window_set_icon(GTK_WINDOW(windowHandle), (GdkPixbuf*)icon);
+    const auto *iconData = reinterpret_cast<const guchar *>(iconDataStr.data());
+    gboolean written = gdk_pixbuf_loader_write(
+        loader, iconData, iconDataStr.size(), &error);
+    gboolean closed = written && gdk_pixbuf_loader_close(loader, &error);
+    GdkPixbuf *icon = closed ? gdk_pixbuf_loader_get_pixbuf(loader) : nullptr;
+    bool valid = icon != nullptr;
+    if(valid) {
+        gtk_window_set_icon(GTK_WINDOW(windowHandle), icon);
+    }
+    if(error) {
+        g_error_free(error);
+    }
+    g_object_unref(loader);
+    return valid;
 
     #elif defined(__APPLE__)
-    id icon = nullptr;
-    const char *iconData = iconDataStr.c_str();
-    icon =
-        ((id (*)(id, SEL))objc_msgSend)("NSImage"_cls, "alloc"_sel);
-
+    const char *iconData = iconDataStr.data();
     id nsIconData = ((id (*)(id, SEL, const char*, int))objc_msgSend)("NSData"_cls,
                 "dataWithBytes:length:"_sel, iconData, iconDataStr.length());
+    if(!nsIconData) {
+        return false;
+    }
 
-    ((void (*)(id, SEL, id))objc_msgSend)(icon, "initWithData:"_sel, nsIconData);
+    id icon = ((id (*)(id, SEL))objc_msgSend)("NSImage"_cls, "alloc"_sel);
+    icon = ((id (*)(id, SEL, id))objc_msgSend)(icon, "initWithData:"_sel, nsIconData);
+    if(!icon) {
+        return false;
+    }
     ((void (*)(id, SEL, id))objc_msgSend)(((id (*)(id, SEL))objc_msgSend)("NSApplication"_cls,
                                 "sharedApplication"_sel),
-                "setApplicationIconImage:"_sel,icon);
+                "setApplicationIconImage:"_sel, icon);
+    // NSApplication retains the image; release the manually allocated object
+    // to keep repeated window.setIcon calls leak-free without ARC.
+    ((void (*)(id, SEL))objc_msgSend)(icon, "release"_sel);
+    return true;
 
     #elif defined(_WIN32)
     GdiplusStartupInput gdiplusStartupInput;
-    ULONG_PTR gdiplusToken;
-    GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+    ULONG_PTR gdiplusToken = 0;
+    if(GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL) != Gdiplus::Ok) {
+        return false;
+    }
 
+    const auto *iconData = reinterpret_cast<const BYTE *>(iconDataStr.data());
+    IStream *pStream = SHCreateMemStream(iconData, iconDataStr.size());
+    if(!pStream) {
+        GdiplusShutdown(gdiplusToken);
+        return false;
+    }
+
+    Gdiplus::Bitmap *bitmap = Gdiplus::Bitmap::FromStream(pStream);
     HICON icon = nullptr;
-    const char *iconData = iconDataStr.c_str();
-    unsigned char *uiconData = reinterpret_cast<unsigned char*>(const_cast<char*>(iconData));
-    IStream *pStream = SHCreateMemStream((BYTE *) uiconData, iconDataStr.length());
-    Gdiplus::Bitmap* bitmap = Gdiplus::Bitmap::FromStream(pStream);
-    bitmap->GetHICON(&icon);
-    pStream->Release();
+    bool valid = bitmap && bitmap->GetLastStatus() == Gdiplus::Ok &&
+        bitmap->GetHICON(&icon) == Gdiplus::Ok && icon != nullptr;
+    if(valid) {
+        SendMessage(windowHandle, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+        SendMessage(windowHandle, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+        if(windowIcon && windowIcon != icon) {
+            DestroyIcon(windowIcon);
+        }
+        windowIcon = icon;
+    }
+    else if(icon) {
+        DestroyIcon(icon);
+    }
 
-    SendMessage(windowHandle, WM_SETICON, ICON_SMALL, (LPARAM)icon);
-    SendMessage(windowHandle, WM_SETICON, ICON_BIG, (LPARAM)icon);
+    delete bitmap;
+    pStream->Release();
     GdiplusShutdown(gdiplusToken);
+    return valid;
     #endif
 }
 
@@ -1382,6 +1563,10 @@ void setMainMenu(const json &menu) {
 
 bool init(const json &windowOptions) {
     json output;
+    {
+        std::lock_guard<std::mutex> guard(windowLifecycleMutex);
+        uiThreadId = std::this_thread::get_id();
+    }
 
     windowProps.sizeOptions = __jsonToSizeOptions(windowOptions, true);
 
@@ -1551,13 +1736,7 @@ json isMinimized(const json &input) {
 
 json show(const json &input) {
     json output;
-    #if defined(__linux__) || defined(__FreeBSD__)
-    nativeWindow->dispatch([&]() {
-        window::show();
-    });
-    #else
     window::show();
-    #endif
     output["success"] = true;
     return output;
 }
@@ -1611,7 +1790,10 @@ json setIcon(const json &input) {
         return output;
     }
     string icon = input["icon"].get<string>();
-    window::setIcon(icon);
+    if(!window::setIcon(icon)) {
+        output["error"] = errors::makeErrorPayload(errors::NE_WI_UNBSICO, icon);
+        return output;
+    }
     output["success"] = true;
     return output;
 }
@@ -1754,9 +1936,8 @@ json setMainMenu(const json &input) {
 json beginDrag(const json &input) {
     json output;
 
-    #if defined(_WIN32)
-    nativeWindow->dispatch([&]() { beginDragNative(); });
-    #elif defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
+    #if defined(_WIN32) || defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
+    // The router already entered the UI thread for window.* methods.
     window::beginDragNative();
     #endif
 
@@ -1784,9 +1965,7 @@ json print(const json &input) {
         "runOperationModalForWindow:delegate:didRunSelector:contextInfo:"_sel, windowHandle, nullptr, nullptr, nullptr);  
     #elif defined(_WIN32)
     ICoreWebView2 *webview = (ICoreWebView2*)nativeWindow->wv();
-    nativeWindow->dispatch([=] {
-        webview->ExecuteScript(L"window.print()", nullptr);
-    });
+    webview->ExecuteScript(L"window.print()", nullptr);
 
     #endif
     output["success"] = true;

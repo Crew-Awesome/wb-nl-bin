@@ -85,6 +85,11 @@ string __getStatusCodeString(const errors::StatusCode code) {
         case errors::NE_CF_UNBPRCF: return "NE_CF_UNBPRCF";
         case errors::NE_CF_UNSUPMD: return "NE_CF_UNSUPMD";
         case errors::NE_CF_UNBLWCF: return "NE_CF_UNBLWCF";
+        // runtime extensions
+        case errors::NE_RT_NATEXCP: return "NE_RT_NATEXCP";
+        case errors::NE_SR_RPCOVFL: return "NE_SR_RPCOVFL";
+        case errors::NE_SR_RSPTOOL: return "NE_SR_RSPTOOL";
+        case errors::NE_WI_UNBSICO: return "NE_WI_UNBSICO";
     }
     return "NE_ST_NOTOK";
 }
@@ -165,6 +170,11 @@ string __findStatusCodeDesc(errors::StatusCode code) {
         case errors::NE_CF_UNBPRCF: return "Unable to parse the config file: %1";
         case errors::NE_CF_UNSUPMD: return "Unsupported mode: %1. The default mode (window) is selected.";
         case errors::NE_CF_UNBLWCF: return "Unable to load the window config file: %1";
+        // runtime extensions
+        case errors::NE_RT_NATEXCP: return "Native method execution failed";
+        case errors::NE_SR_RPCOVFL: return "Native API request queue is full; try again later";
+        case errors::NE_SR_RSPTOOL: return "Native API response exceeds the transport size limit: %1 bytes";
+        case errors::NE_WI_UNBSICO: return "Unable to load window icon: %1";
     }
     return "";
 }

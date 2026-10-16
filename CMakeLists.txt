@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 set(NEU_VERSION "6.10.0")
 set(NEU_CXX_STANDARD 17)
+# Keep the runtime reusable while allowing branded distributions (WeekBox
+# uses -DNEU_BINARY_NAME=weekbox in its release build).
+set(NEU_BINARY_NAME "neutralino" CACHE STRING "Base name for the native executable")
 if(APPLE)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.7" CACHE STRING "Minimum supported macOS version")
   project(NeutralinoJS LANGUAGES C CXX OBJC OBJCXX)
 else()
   project(NeutralinoJS LANGUAGES C CXX)
@@ -132,7 +136,7 @@ list(FILTER SOURCES EXCLUDE REGEX ".*/asio/src/.*")
 # =========================
 add_executable(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES 
-  OUTPUT_NAME "neutralino-${NEU_OS_NAME}_${NEU_SYSTEM_PROCESSOR}"
+  OUTPUT_NAME "${NEU_BINARY_NAME}-${NEU_OS_NAME}_${NEU_SYSTEM_PROCESSOR}"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin"
   RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}/bin"
   RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}/bin"
@@ -166,7 +170,6 @@ elseif(APPLE)
   target_compile_definitions(${PROJECT_NAME} PRIVATE 
     WEBVIEW_COCOA=1
     TRAY_APPKIT=1
-    MACOSX_DEPLOYMENT_TARGET=10.7
   )
 elseif(UNIX)
   target_compile_definitions(${PROJECT_NAME} PRIVATE 

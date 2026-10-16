@@ -5,6 +5,7 @@
 #include "lib/json/json.hpp"
 #include "lib/filedialogs/portable-file-dialogs.h"
 #include "settings.h"
+#include "api/app/app.h"
 #include "helpers.h"
 #include "api/os/os.h"
 #include "api/fs/fs.h"
@@ -107,7 +108,8 @@ void init(const json &input) {
                         "You need to install Google Chrome to run this Neutralinojs application",
                         pfd::choice::ok,
                         pfd::icon::error);
-        std::exit(1);
+        app::exit(1);
+        return;
     }
 
     if(regex_search(chromeCmd, regex(" "))) {

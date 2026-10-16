@@ -195,6 +195,18 @@ describe('window.spec: window namespace tests', () => {
             `);
             assert.equal(runner.getOutput(), 'NE_RT_NATRTER');
         });
+
+        it('returns an error when the icon resource cannot be decoded', async () => {
+            runner.run(`
+                try {
+                    await Neutralino.window.setIcon('/resources/icons/missing.png');
+                }
+                catch(err) {
+                    await __close(err.code);
+                }
+            `);
+            assert.equal(runner.getOutput(), 'NE_WI_UNBSICO');
+        });
     });
 
     describe('window.setBadge', () => {

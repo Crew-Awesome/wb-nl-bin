@@ -12,9 +12,6 @@ function openInBrowser() {
 }
 
 Neutralino.init();
-if(NL_MODE == "window") {
-    Neutralino.window.setTitle("Test app"); // This request will be queued and processed when WS connects.
-}
 
 // This request will be queued and processed when the extension connects.
 Neutralino.extensions.dispatch("js.neutralino.sampleextension", "eventToExtension", "Hello extension!")

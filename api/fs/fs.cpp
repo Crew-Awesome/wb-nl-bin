@@ -197,13 +197,17 @@ bool writeFile(const fs::FileWriterOptions &fileWriterOptions) {
 }
 
 int openFile(const string &filename) {
-    int virtualFileId = openedFiles.size();
     ifstream *reader = new ifstream(CONVSTR(filename), ios::binary);
     if(!reader->is_open()) {
         delete reader;
         return -1;
     }
+
     lock_guard<mutex> guard(openedFilesLock);
+    int virtualFileId = 0;
+    while(openedFiles.find(virtualFileId) != openedFiles.end()) {
+        ++virtualFileId;
+    }
     openedFiles[virtualFileId] = reader;
     return virtualFileId;
 }

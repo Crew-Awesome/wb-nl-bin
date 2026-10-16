@@ -84,7 +84,12 @@ enum StatusCode {
     NE_CF_UNBLDCF,
     NE_CF_UNBPRCF,
     NE_CF_UNSUPMD,
-    NE_CF_UNBLWCF
+    NE_CF_UNBLWCF,
+    // runtime extensions
+    NE_RT_NATEXCP,
+    NE_SR_RPCOVFL,
+    NE_SR_RSPTOOL,
+    NE_WI_UNBSICO
 };
 
 json makeMissingArgErrorPayload(const string& missingArg);

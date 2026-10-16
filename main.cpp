@@ -69,6 +69,16 @@ void __registerCleanupHandlers() {
     atexit(__cleanup);
 }
 
+void __shutdownServer() {
+    if(!neuserver::isInitialized()) {
+        return;
+    }
+    neuserver::stop();
+    neuserver::waitForNativeWorkers();
+    neuserver::stopIO();
+    neuserver::waitForServer();
+}
+
 void __startApp() {
     json options = settings::getConfig();
     switch(settings::getMode()) {
@@ -88,6 +98,7 @@ void __startApp() {
                     #endif
                     pfd::choice::ok,
                     pfd::icon::error);
+                __shutdownServer();
                 std::exit(1);
             }
             }

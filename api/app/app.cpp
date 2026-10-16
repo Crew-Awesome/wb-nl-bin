@@ -1,5 +1,8 @@
+#include <atomic>
+#include <cstdlib>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
 #include <signal.h>
@@ -16,6 +19,7 @@
 #include "errors.h"
 #include "server/neuserver.h"
 #include "api/app/app.h"
+#include "api/debug/debug.h"
 #include "api/window/window.h"
 #include "api/os/os.h"
 #include "api/events/events.h"
@@ -25,12 +29,50 @@ using json = nlohmann::json;
 
 namespace app {
 
+atomic<bool> exitRequested(false);
+
 void exit(int code) {
-    if(neuserver::isInitialized()) {
-        neuserver::stop();
+    bool expected = false;
+    if(!exitRequested.compare_exchange_strong(expected, true)) {
+        return;
     }
+
+    if(neuserver::isInitialized()) {
+        // Do not tear down the window from an RPC worker. Stop admitting work,
+        // wait for in-flight native calls, and close the UI from a coordinator
+        // thread that can safely join the worker pool.
+        thread shutdownThread([code]() {
+            neuserver::stop();
+            neuserver::waitForNativeWorkers();
+            try {
+                const bool windowMode =
+                    settings::getMode() == settings::AppModeWindow;
+
+                // The native response has already been submitted before this
+                // point. Stop and join the transport before closing the UI;
+                // GTK/Cocoa may terminate from their destruction callback and
+                // must never leave a joinable server thread behind.
+                neuserver::stopIO();
+                neuserver::waitForServer();
+                if(windowMode) {
+                    window::_close(code);
+                }
+                else {
+                    std::exit(code);
+                }
+            }
+            catch(const exception &e) {
+                debug::log(debug::LogTypeError, e.what());
+                neuserver::stopIO();
+                neuserver::waitForServer();
+                std::exit(code);
+            }
+        });
+        shutdownThread.detach();
+        return;
+    }
+
     if(settings::getMode() == settings::AppModeWindow) {
-        os::cleanupTray();
         window::_close(code);
     }
     else {

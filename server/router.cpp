@@ -1,7 +1,8 @@
-#include <string>
-#include <regex>
-#include <vector>
 #include <filesystem>
+#include <mutex>
+#include <regex>
+#include <string>
+#include <vector>
 
 #include <websocketpp/server.hpp>
 
@@ -189,6 +190,16 @@ map<string, router::NativeMethod> getMethodMap() {
     return methodMap;
 }
 
+bool __requiresWindowThread(const string &method) {
+    return regex_match(method, regex("^window\\.")) ||
+        method == "computer.getMousePosition" ||
+        method == "computer.setMousePosition" ||
+        method == "computer.setMouseGrabbing" ||
+        method == "computer.sendKey" ||
+        method == "os.setTray" ||
+        regex_match(method, regex("^os\\.show"));
+}
+
 router::NativeMessage executeNativeMethod(const router::NativeMessage &request) {
     string nativeMethodId = request.method;
     router::NativeMessage response;
@@ -217,31 +228,37 @@ router::NativeMessage executeNativeMethod(const router::NativeMessage &request) 
                 return response;
             }
             router::NativeMethod nativeMethod = methodMap[nativeMethodId];
-            #if defined(__linux__) || defined(_WIN32) || defined(__FreeBSD__)
-            json apiOutput;
-            #endif
             #if defined(__APPLE__)
             __block json apiOutput;
-            // In macos, child threads cannot run UI logic
-            if(nativeMethodId == "os.showMessageBox" ||
-                regex_match(nativeMethodId, regex("^window.*")) ||
-                regex_match(nativeMethodId, regex("^computer.*")) ||
-                nativeMethodId == "os.setTray") {
+            #else
+            json apiOutput;
+            #endif
+            // All window APIs touch toolkit-owned objects. The WebSocket
+            // server and native worker pool are not the UI thread, so use the
+            // same synchronous boundary on every supported platform.
+            if(settings::getMode() == settings::AppModeWindow &&
+                __requiresWindowThread(nativeMethodId)) {
+                window::dispatchSync([&]() {
+                    apiOutput = (*nativeMethod)(request.data);
+                });
+            }
+            #if defined(__APPLE__)
+            // Cocoa APIs also need the application main queue in non-window
+            // modes, where window::dispatchSync is not available.
+            else if(__requiresWindowThread(nativeMethodId)) {
                 dispatch_sync(dispatch_get_main_queue(), ^{
                     apiOutput = (*nativeMethod)(request.data);
                 });
             }
+            #endif
             else {
                 apiOutput = (*nativeMethod)(request.data);
             }
-            #else
-                apiOutput = (*nativeMethod)(request.data);
-            #endif
             response.data = apiOutput;
             return response;
         }
         catch(const exception& e){
-            response.data["error"] = errors::makeErrorPayload(errors::NE_RT_NATRTER);
+            response.data["error"] = errors::makeErrorPayload(errors::NE_RT_NATEXCP);
             return response;
         }
     }
@@ -252,6 +269,7 @@ router::NativeMessage executeNativeMethod(const router::NativeMessage &request) 
 }
 
 map<string, string> mountedPaths = {};
+mutex mountedPathsLock;
 
 errors::StatusCode mountPath(string &path, string &target) {
     path = helpers::normalizePath(path);
@@ -269,7 +287,8 @@ errors::StatusCode mountPath(string &path, string &target) {
     if(!filesystem::is_directory(targetPath)) {
         return errors::NE_FS_NOTADIR;
     }
-    if(router::isMounted(path)) {
+    lock_guard<mutex> guard(mountedPathsLock);
+    if(mountedPaths.find(path) != mountedPaths.end()) {
         return errors::NE_SR_MPINUSE;
     }
 
@@ -278,6 +297,7 @@ errors::StatusCode mountPath(string &path, string &target) {
 }
 
 bool isMounted(const string &path) {
+    lock_guard<mutex> guard(mountedPathsLock);
     return mountedPaths.find(path) != mountedPaths.end();
 }
 
@@ -287,15 +307,19 @@ bool unmountPath(string &path) {
     if(path.empty()) {
         path = "/";
     }
-    if(!router::isMounted(path)) {
+
+    lock_guard<mutex> guard(mountedPathsLock);
+    auto mount = mountedPaths.find(path);
+    if(mount == mountedPaths.end()) {
         return false;
     }
     
-    mountedPaths.erase(path);
+    mountedPaths.erase(mount);
     return true;
 }
 
 map<string, string> getMounts() {
+    lock_guard<mutex> guard(mountedPathsLock);
     return mountedPaths;
 }
 

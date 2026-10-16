@@ -1,5 +1,5 @@
 {
-    "applicationId": "js.neutralino.sample",
+    "applicationId": "com.weekbox.launcher",
     "version": "0.0.2",
     "resourcesURL": "http://localhost:8080/updater_test/update_res.neu",
     "data": {

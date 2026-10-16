@@ -4,11 +4,14 @@
 # A script to build res.neu for the test app
 #
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 echo "Updating client..."
-./scripts/update_client.sh
+"$SCRIPT_DIR/update_client.sh"
 
 echo "Packing resources to resources.neu..."
-cd ./bin
+cd "$ROOT_DIR/bin" || exit 1
 mkdir -p ./.res
 cp -r ./resources ./.res/
 cp ./neutralino.config.json ./.res/neutralino.config.json

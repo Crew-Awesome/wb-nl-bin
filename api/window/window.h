@@ -1,6 +1,7 @@
 #ifndef NEU_WINDOW_H
 #define NEU_WINDOW_H
 
+#include <functional>
 #include <string>
 
 #include "errors.h"
@@ -124,7 +125,8 @@ void focus();
 void setFullScreen();
 void exitFullScreen();
 bool isFullScreen();
-void setIcon(const string &icon);
+bool setIcon(const string &icon);
+void dispatchSync(const std::function<void()> &task);
 void setBadge(int count);
 void move(int x, int y);
 window::SizeOptions getSize();

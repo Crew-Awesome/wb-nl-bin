@@ -400,13 +400,13 @@ public:
     gtk_window_close(GTK_WINDOW(m_window));
     gtk_widget_destroy(m_window);
   }
-  void dispatch(std::function<void()> f) {
-    g_idle_add_full(G_PRIORITY_HIGH_IDLE, (GSourceFunc)([](void *f) -> int {
+  bool dispatch(std::function<void()> f) {
+    return g_idle_add_full(G_PRIORITY_HIGH_IDLE, (GSourceFunc)([](void *f) -> int {
                       (*static_cast<dispatch_fn_t *>(f))();
                       return G_SOURCE_REMOVE;
                     }),
                     new std::function<void()>(f),
-                    [](void *f) { delete static_cast<dispatch_fn_t *>(f); });
+                    [](void *f) { delete static_cast<dispatch_fn_t *>(f); }) != 0;
   }
 
   void *dl() {
@@ -805,13 +805,14 @@ public:
     });
     ((void (*)(id, SEL))objc_msgSend)(app, "run"_sel);
   }
-  void dispatch(std::function<void()> f) {
+  bool dispatch(std::function<void()> f) {
     dispatch_async_f(dispatch_get_main_queue(), new dispatch_fn_t(f),
                      (dispatch_function_t)([](void *arg) {
                        auto f = static_cast<dispatch_fn_t *>(arg);
                        (*f)();
                        delete f;
                      }));
+    return true;
   }
 
   void init(const std::string js) {
@@ -1035,7 +1036,11 @@ class DropTarget : public IDropTarget {
 class edge_chromium {
 public:
   bool embed(HWND wnd, bool debug, bool openInspector, bool emitDropEvents) {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if(FAILED(comResult)) {
+      return false;
+    }
+    m_comInitialized = true;
     std::atomic_flag flag = ATOMIC_FLAG_INIT;
     flag.test_and_set();
 
@@ -1062,36 +1067,47 @@ public:
         userDataFolder += L"\\";
     }
 
-    HRESULT res = CreateCoreWebView2EnvironmentWithOptions(
-        nullptr,
-        (userDataFolder + currentExeNameW).c_str(),
-        nullptr,
-        new webview2_com_handler(wnd, [&](ICoreWebView2Controller* controller) {
+    auto *completionHandler = new webview2_com_handler(
+        wnd, [&](ICoreWebView2Controller* controller) {
+            if(!controller) {
+              flag.clear();
+              return;
+            }
             m_controller = controller;
-            m_controller->get_CoreWebView2(&m_webview);
-            m_webview->AddRef();
+            if(FAILED(m_controller->get_CoreWebView2(&m_webview)) ||
+                m_webview == nullptr) {
+              flag.clear();
+              return;
+            }
 
             ComPtr<ICoreWebView2Controller4> controller4;
             if(emitDropEvents && SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&controller4)))) {
                 controller4->put_AllowExternalDrop(FALSE);
             }
 
-            ICoreWebView2Settings* m_settings;
-            m_webview->get_Settings(&m_settings);
-            if (debug) {
-                m_settings->put_AreDevToolsEnabled(TRUE);
-                if (openInspector)
-                  m_webview->OpenDevToolsWindow();
-            }
-            else {
-                m_settings->put_AreDevToolsEnabled(FALSE);
-                m_settings->put_IsStatusBarEnabled(FALSE);
+            ICoreWebView2Settings* m_settings = nullptr;
+            if(SUCCEEDED(m_webview->get_Settings(&m_settings)) && m_settings) {
+              if (debug) {
+                  m_settings->put_AreDevToolsEnabled(TRUE);
+                  if (openInspector)
+                    m_webview->OpenDevToolsWindow();
+              }
+              else {
+                  m_settings->put_AreDevToolsEnabled(FALSE);
+                  m_settings->put_IsStatusBarEnabled(FALSE);
+              }
+              m_settings->Release();
             }
             flag.clear();
-        }
-    ));
-    if (res != S_OK) {
-      CoUninitialize();
+        });
+    HRESULT res = CreateCoreWebView2EnvironmentWithOptions(
+        nullptr,
+        (userDataFolder + currentExeNameW).c_str(),
+        nullptr,
+        completionHandler);
+    completionHandler->Release();
+    if (FAILED(res)) {
+      shutdown();
       return false;
     }
     MSG msg = {};
@@ -1099,7 +1115,29 @@ public:
       TranslateMessage(&msg);
       DispatchMessage(&msg);
     }
+    if(m_webview == nullptr || m_controller == nullptr) {
+      shutdown();
+      return false;
+    }
     return true;
+  }
+
+  void shutdown() {
+    if(m_controller) {
+      m_controller->Close();
+    }
+    if(m_webview) {
+      m_webview->Release();
+      m_webview = nullptr;
+    }
+    if(m_controller) {
+      m_controller->Release();
+      m_controller = nullptr;
+    }
+    if(m_comInitialized) {
+      CoUninitialize();
+      m_comInitialized = false;
+    }
   }
 
   void init(const std::string js) {
@@ -1158,6 +1196,7 @@ private:
 
   ICoreWebView2 *m_webview = nullptr;
   ICoreWebView2Controller *m_controller = nullptr;
+  bool m_comInitialized = false;
 
   class webview2_com_handler
       : public ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler,
@@ -1171,23 +1210,59 @@ private:
     webview2_com_handler(HWND hwnd,
                          webview2_com_handler_cb_t cb)
         : m_window(hwnd), m_cb(cb) {}
-    ULONG STDMETHODCALLTYPE AddRef() { return 1; }
-    ULONG STDMETHODCALLTYPE Release() { return 1; }
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, LPVOID *ppv) {
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++m_refCount; }
+    ULONG STDMETHODCALLTYPE Release() override {
+      ULONG remaining = --m_refCount;
+      if(remaining == 0) {
+        delete this;
+      }
+      return remaining;
+    }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, LPVOID *ppv) override {
+      if(!ppv) {
+        return E_POINTER;
+      }
+      *ppv = nullptr;
+      if(riid == IID_IUnknown ||
+          riid == __uuidof(ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler)) {
+        *ppv = static_cast<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler *>(this);
+      }
+      else if(riid == __uuidof(ICoreWebView2CreateCoreWebView2ControllerCompletedHandler)) {
+        *ppv = static_cast<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler *>(this);
+      }
+      else if(riid == __uuidof(ICoreWebView2WebMessageReceivedEventHandler)) {
+        *ppv = static_cast<ICoreWebView2WebMessageReceivedEventHandler *>(this);
+      }
+      else if(riid == __uuidof(ICoreWebView2PermissionRequestedEventHandler)) {
+        *ppv = static_cast<ICoreWebView2PermissionRequestedEventHandler *>(this);
+      }
+      else {
+        return E_NOINTERFACE;
+      }
+      AddRef();
       return S_OK;
     }
     HRESULT STDMETHODCALLTYPE Invoke(HRESULT res,
-                                     ICoreWebView2Environment *env) {
-      env->CreateCoreWebView2Controller(m_window, this);
-      return S_OK;
+                                     ICoreWebView2Environment *env) override {
+      if(FAILED(res) || !env) {
+        m_cb(nullptr);
+        return FAILED(res) ? res : E_INVALIDARG;
+      }
+      return env->CreateCoreWebView2Controller(m_window, this);
     }
     HRESULT STDMETHODCALLTYPE Invoke(HRESULT res,
-                                     ICoreWebView2Controller *controller) {
+                                     ICoreWebView2Controller *controller) override {
+      if(FAILED(res) || !controller) {
+        return FAILED(res) ? res : E_INVALIDARG;
+      }
       controller->AddRef();
 
-      ICoreWebView2 *webview;
+      ICoreWebView2 *webview = nullptr;
       ::EventRegistrationToken token;
-      controller->get_CoreWebView2(&webview);
+      if(FAILED(controller->get_CoreWebView2(&webview)) || !webview) {
+        controller->Release();
+        return E_FAIL;
+      }
       webview->add_WebMessageReceived(this, &token);
       webview->add_PermissionRequested(this, &token);
       
@@ -1206,11 +1281,16 @@ private:
       }).Get(), &token);
 
       m_cb(controller);
+      webview->Release();
       return S_OK;
     }
+
     HRESULT STDMETHODCALLTYPE Invoke(
-        ICoreWebView2 *sender, ICoreWebView2WebMessageReceivedEventArgs *args) {
-      LPWSTR message;
+        ICoreWebView2 *sender, ICoreWebView2WebMessageReceivedEventArgs *args) override {
+      if(!sender || !args) {
+        return E_INVALIDARG;
+      }
+      LPWSTR message = nullptr;
       args->TryGetWebMessageAsString(&message);
 
       std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> wideCharConverter;
@@ -1221,7 +1301,10 @@ private:
     }
     HRESULT STDMETHODCALLTYPE
     Invoke(ICoreWebView2 *sender,
-           ICoreWebView2PermissionRequestedEventArgs *args) {
+           ICoreWebView2PermissionRequestedEventArgs *args) override {
+      if(!sender || !args) {
+        return E_INVALIDARG;
+      }
       COREWEBVIEW2_PERMISSION_KIND kind;
       args->get_PermissionKind(&kind);
       if (kind == COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ) {
@@ -1233,6 +1316,7 @@ private:
   private:
     HWND m_window;
     webview2_com_handler_cb_t m_cb;
+    std::atomic<ULONG> m_refCount{1};
   };
 };
 
@@ -1403,12 +1487,20 @@ public:
     m_browser->resize(m_window);
 
     if(emitDropEvents) {
-      OleInitialize(nullptr);
-      RevokeDragDrop(m_window);
-      ComPtr<DropTarget> dropTarget = new DropTarget();
-      RegisterDragDrop(m_window, dropTarget.Get());
-      DragAcceptFiles(m_window, TRUE);
+      m_oleInitialized = SUCCEEDED(OleInitialize(nullptr));
+      if(m_oleInitialized) {
+        RevokeDragDrop(m_window);
+        ComPtr<DropTarget> dropTarget = new DropTarget();
+        if(SUCCEEDED(RegisterDragDrop(m_window, dropTarget.Get()))) {
+          m_dropTargetRegistered = true;
+          DragAcceptFiles(m_window, TRUE);
+        }
+      }
     }
+  }
+
+  ~win32_edge_engine() {
+    cleanupResources();
   }
 
   void run() {
@@ -1433,32 +1525,57 @@ public:
   void *window() { return (void *)m_window; }
   void *wv() { return (void *)m_browser->wv(); }
   void terminate(int exitCode = 0) {
+    processExitCode = exitCode;
 
-    // event to wait for window close completion
+    // terminate can be called by an RPC worker or by the window thread itself.
+    // Posting a synchronous close to the same thread would deadlock.
+    if(GetCurrentThreadId() == m_main_thread) {
+      cleanupResources();
+      DestroyWindow(m_window);
+      return;
+    }
+
     auto evtWindowClosed = CreateEvent(
         NULL,               // default security attributes
         TRUE,               // manual-reset event
         FALSE,              // initial state is nonsignaled
         TEXT("WindowClosedEvent")  // object name
     );
-    processExitCode = exitCode;
 
-    dispatch([=]() {
+    if(!dispatch([=]() {
+        cleanupResources();
         DestroyWindow(m_window);
         SetEvent(evtWindowClosed);
-    });
+    })) {
+      CloseHandle(evtWindowClosed);
+      return;
+    }
 
-    // wait for dispatch() to complete
-    /* TODO: Check why this method doesn't trigger a signal on Windows
-    *        when "exitProcessOnClose" is true. (Previous value: 10000)
-    *        This wait causes a delay when closing the program.
-    */
-    WaitForSingleObject(evtWindowClosed, 300);
+    // The event is signaled by the UI thread before the handle is closed, so
+    // the callback cannot use a stale event handle after this function returns.
+    WaitForSingleObject(evtWindowClosed, INFINITE);
     CloseHandle(evtWindowClosed);
-    OleUninitialize();
   }
-  void dispatch(dispatch_fn_t f) {
-    PostThreadMessage(m_main_thread, WM_APP, 0, (LPARAM) new dispatch_fn_t(f));
+  void cleanupResources() {
+    if(m_dropTargetRegistered) {
+      RevokeDragDrop(m_window);
+      m_dropTargetRegistered = false;
+    }
+    // Release WebView2 interfaces while the apartment initialized by embed()
+    // is still active, then balance the optional OLE drag-and-drop apartment.
+    m_browser->shutdown();
+    if(m_oleInitialized) {
+      OleUninitialize();
+      m_oleInitialized = false;
+    }
+  }
+  bool dispatch(dispatch_fn_t f) {
+    auto task = new dispatch_fn_t(std::move(f));
+    if(!PostThreadMessage(m_main_thread, WM_APP, 0, (LPARAM) task)) {
+      delete task;
+      return false;
+    }
+    return true;
   }
 
   void set_title(const std::string title) {
@@ -1531,6 +1648,8 @@ private:
   DWORD m_main_thread = GetCurrentThreadId();
   std::unique_ptr<webview::edge_chromium> m_browser =
       std::make_unique<webview::edge_chromium>();
+  bool m_oleInitialized = false;
+  bool m_dropTargetRegistered = false;
 
 };
 
