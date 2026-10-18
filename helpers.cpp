@@ -23,7 +23,7 @@
 #include <mach-o/dyld.h>
 #include <limits.h>
 #include <cstdlib>
-#import <Foundation/Foundation.h>
+#include <cstring>
 #elif defined(__FreeBSD__)
 #include <pthread.h>
 #include <pthread_np.h>
@@ -338,7 +338,7 @@ void setProcessName(const string &name, int argc, char **argv) {
     }
     setThreadName(name);
 
-    #if defined(__linux__)
+    #if defined(__linux__) || defined(__APPLE__)
     if(argc > 0 && argv && argv[0]) {
         string currentArg0(argv[0]);
         string lowerArg0 = currentArg0;
@@ -352,13 +352,6 @@ void setProcessName(const string &name, int argc, char **argv) {
                 memcpy(argv[0], name.data(), copyLen);
             }
         }
-    }
-    #elif defined(__APPLE__)
-    (void)argc;
-    (void)argv;
-    @autoreleasepool {
-        NSString *nsName = [NSString stringWithUTF8String:name.c_str()];
-        [[NSProcessInfo processInfo] setProcessName:nsName];
     }
     #elif defined(__FreeBSD__)
     (void)argc;

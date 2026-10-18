@@ -5,7 +5,6 @@ set(NEU_CXX_STANDARD 17)
 # uses -DNEU_BINARY_NAME=weekbox in its release build).
 set(NEU_BINARY_NAME "neutralino" CACHE STRING "Base name for the native executable")
 if(APPLE)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.7" CACHE STRING "Minimum supported macOS version")
   project(NeutralinoJS LANGUAGES C CXX OBJC OBJCXX)
 else()
   project(NeutralinoJS LANGUAGES C CXX)
@@ -84,10 +83,9 @@ elseif(APPLE)
   )
   list(APPEND SOURCES ${OS_SOURCES})
 
-  # Force window.cpp and helpers.cpp to compile as Objective-C++ on macOS
+  # Force window.cpp to compile as Objective-C++ for ScreenCaptureKit support
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/api/window/window.cpp
-    ${PROJECT_SOURCE_DIR}/helpers.cpp
     PROPERTIES LANGUAGE OBJCXX
   )
 
@@ -171,6 +169,7 @@ elseif(APPLE)
   target_compile_definitions(${PROJECT_NAME} PRIVATE 
     WEBVIEW_COCOA=1
     TRAY_APPKIT=1
+    MACOSX_DEPLOYMENT_TARGET=10.7
   )
 elseif(UNIX)
   target_compile_definitions(${PROJECT_NAME} PRIVATE 

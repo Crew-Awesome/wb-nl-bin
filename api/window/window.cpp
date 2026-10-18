@@ -22,6 +22,7 @@
 
 #elif defined(__APPLE__)
 #include <objc/objc-runtime.h>
+#include <objc/message.h>
 #include <dispatch/dispatch.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CGDisplayConfiguration.h>

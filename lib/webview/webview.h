@@ -583,6 +583,7 @@ using browser_engine = gtk_webkit_engine;
 
 #include <CoreGraphics/CoreGraphics.h>
 #include <objc/objc-runtime.h>
+#include <objc/message.h>
 
 #define NSBackingStoreBuffered 2
 
