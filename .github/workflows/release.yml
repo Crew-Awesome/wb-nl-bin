@@ -158,35 +158,40 @@ jobs:
       run: |
         mkdir -p build
         cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 . -G Ninja -B build
-        ninja -C build 2>&1 | tee /tmp/build_arm64.log || {
+        if ! ninja -C build > /tmp/build_arm64.log 2>&1; then
+          cat /tmp/build_arm64.log
           PASTE_URL=$(curl -s -X POST --data-binary @/tmp/build_arm64.log https://paste.rs || true)
           echo "::error::arm64 build failed: $PASTE_URL"
           exit 1
-        }
+        fi
+        echo "=== ARM64 BUILD COMPLETED ==="
+        ls -la bin/
 
     - name: Build x64
       run: |
         rm -fr build
         mkdir -p build
         cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 . -G Ninja -B build
-        ninja -C build 2>&1 | tee /tmp/build_x64.log || {
+        if ! ninja -C build > /tmp/build_x64.log 2>&1; then
+          cat /tmp/build_x64.log
           PASTE_URL=$(curl -s -X POST --data-binary @/tmp/build_x64.log https://paste.rs || true)
           echo "::error::x64 build failed: $PASTE_URL"
           exit 1
-        }
+        fi
+        echo "=== X64 BUILD COMPLETED ==="
+        ls -la bin/
 
     - name: Merge universal
       run: |
         echo "=== BIN DIRECTORY ==="
         ls -la bin/
-        file bin/neutralino-mac_* || true
-        lipo -info bin/neutralino-mac_* || true
-        lipo bin/neutralino-mac_x64 bin/neutralino-mac_arm64 -create -output bin/neutralino-mac_universal 2>&1 | tee /tmp/lipo.log || {
+        if ! lipo bin/neutralino-mac_x64 bin/neutralino-mac_arm64 -create -output bin/neutralino-mac_universal > /tmp/lipo.log 2>&1; then
+          cat /tmp/lipo.log
           LIPO_ERR=$(cat /tmp/lipo.log)
           PASTE_URL=$(curl -s -X POST --data-binary @/tmp/lipo.log https://paste.rs || true)
           echo "::error::lipo failed ($PASTE_URL): $LIPO_ERR"
           exit 1
-        }
+        fi
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v6
