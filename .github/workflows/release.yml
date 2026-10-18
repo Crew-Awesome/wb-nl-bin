@@ -158,14 +158,22 @@ jobs:
       run: |
         mkdir -p build
         cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 . -G Ninja -B build
-        ninja -C build
+        ninja -C build 2>&1 | tee /tmp/build_arm64.log || {
+          PASTE_URL=$(curl -s -X POST --data-binary @/tmp/build_arm64.log https://paste.rs || true)
+          echo "::error::arm64 build failed: $PASTE_URL"
+          exit 1
+        }
 
     - name: Build x64
       run: |
         rm -fr build
         mkdir -p build
         cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=x86_64 . -G Ninja -B build
-        ninja -C build
+        ninja -C build 2>&1 | tee /tmp/build_x64.log || {
+          PASTE_URL=$(curl -s -X POST --data-binary @/tmp/build_x64.log https://paste.rs || true)
+          echo "::error::x64 build failed: $PASTE_URL"
+          exit 1
+        }
 
     - name: Merge universal
       run: |
