@@ -84,9 +84,10 @@ elseif(APPLE)
   )
   list(APPEND SOURCES ${OS_SOURCES})
 
-  # Force window.cpp to compile as Objective-C++ for ScreenCaptureKit support
+  # Force window.cpp and helpers.cpp to compile as Objective-C++ on macOS
   set_source_files_properties(
     ${PROJECT_SOURCE_DIR}/api/window/window.cpp
+    ${PROJECT_SOURCE_DIR}/helpers.cpp
     PROPERTIES LANGUAGE OBJCXX
   )
 
@@ -303,5 +304,10 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     CXX_STANDARD ${NEU_CXX_STANDARD}
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
-    ENABLE_EXPORTS ON
 )
+
+if(UNIX AND NOT APPLE)
+  set_target_properties(${PROJECT_NAME} PROPERTIES
+    ENABLE_EXPORTS ON
+  )
+endif()

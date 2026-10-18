@@ -21,9 +21,9 @@
 #elif defined(__APPLE__)
 #include <pthread.h>
 #include <mach-o/dyld.h>
-#include <objc/objc-runtime.h>
 #include <limits.h>
 #include <cstdlib>
+#import <Foundation/Foundation.h>
 #elif defined(__FreeBSD__)
 #include <pthread.h>
 #include <pthread_np.h>
@@ -356,18 +356,9 @@ void setProcessName(const string &name, int argc, char **argv) {
     #elif defined(__APPLE__)
     (void)argc;
     (void)argv;
-    id procInfoCls = (id)objc_getClass("NSProcessInfo");
-    if(procInfoCls) {
-        id procInfo = ((id (*)(id, SEL))objc_msgSend)(
-            procInfoCls, sel_registerName("processInfo"));
-        id nsName = ((id (*)(id, SEL, const char *))objc_msgSend)(
-            (id)objc_getClass("NSString"),
-            sel_registerName("stringWithUTF8String:"),
-            name.c_str());
-        if(procInfo && nsName) {
-            ((void (*)(id, SEL, id))objc_msgSend)(
-                procInfo, sel_registerName("setProcessName:"), nsName);
-        }
+    @autoreleasepool {
+        NSString *nsName = [NSString stringWithUTF8String:name.c_str()];
+        [[NSProcessInfo processInfo] setProcessName:nsName];
     }
     #elif defined(__FreeBSD__)
     (void)argc;
