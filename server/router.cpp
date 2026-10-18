@@ -228,11 +228,7 @@ router::NativeMessage executeNativeMethod(const router::NativeMessage &request) 
                 return response;
             }
             router::NativeMethod nativeMethod = methodMap[nativeMethodId];
-            #if defined(__APPLE__)
-            __block json apiOutput;
-            #else
             json apiOutput;
-            #endif
             // All window APIs touch toolkit-owned objects. The WebSocket
             // server and native worker pool are not the UI thread, so use the
             // same synchronous boundary on every supported platform.
@@ -246,8 +242,9 @@ router::NativeMessage executeNativeMethod(const router::NativeMessage &request) 
             // Cocoa APIs also need the application main queue in non-window
             // modes, where window::dispatchSync is not available.
             else if(__requiresWindowThread(nativeMethodId)) {
+                json *outPtr = &apiOutput;
                 dispatch_sync(dispatch_get_main_queue(), ^{
-                    apiOutput = (*nativeMethod)(request.data);
+                    *outPtr = (*nativeMethod)(request.data);
                 });
             }
             #endif

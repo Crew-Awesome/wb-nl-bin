@@ -387,7 +387,7 @@ void __nativeWorkerLoop(size_t workerIndex) {
             if(nativeRequestQueue.empty()) {
                 return;
             }
-            task = move(nativeRequestQueue.front());
+            task = std::move(nativeRequestQueue.front());
             nativeRequestQueue.pop_front();
             ++activeNativeRequests;
         }
@@ -495,7 +495,7 @@ bool __tryEnqueueNativeRequest(NativeRequestTask &&task, bool &shouldPause) {
     if(task.windowOrdered) {
         task.windowSequence = nextWindowSequence++;
     }
-    nativeRequestQueue.emplace_back(move(task));
+    nativeRequestQueue.emplace_back(std::move(task));
     ++pendingNativeRequests;
     pendingNativePayloadBytes += nativeRequestQueue.back().payloadBytes;
     const size_t connectionPending = ++pendingByConnection[nativeRequestQueue.back().handler];
@@ -806,7 +806,7 @@ void handleMessage(websocketpp::connection_hdl handler, websocketserver::message
             payload.size()
         };
         bool shouldPause = false;
-        if(!__tryEnqueueNativeRequest(move(task), shouldPause)) {
+        if(!__tryEnqueueNativeRequest(std::move(task), shouldPause)) {
             // A shutdown race must not create an unbounded stream of overload
             // responses while the transport is draining.
             if(__isAcceptingRequests()) {
@@ -995,7 +995,7 @@ void broadcastToAllExtensions(const json &message) {
     }
 
     string payload = helpers::jsonToString(message);
-    __postToIO([targets = move(targets), payload]() {
+    __postToIO([targets = std::move(targets), payload]() {
         for(const auto &[handler, opcode]: targets) {
             __sendNow(handler, payload, opcode);
         }
@@ -1010,7 +1010,7 @@ void broadcastToAllApps(const json &message) {
     }
 
     string payload = helpers::jsonToString(message);
-    __postToIO([targets = move(targets), payload]() {
+    __postToIO([targets = std::move(targets), payload]() {
         for(const auto &handler: targets) {
             __sendNow(handler, payload, websocketpp::frame::opcode::text);
         }
