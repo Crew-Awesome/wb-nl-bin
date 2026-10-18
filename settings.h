@@ -49,6 +49,8 @@ enum AppMode { AppModeWindow, AppModeBrowser, AppModeCloud, AppModeChrome };
 bool init();
 json getConfig();
 string getAppId();
+string getProcessName();
+bool isAppPathWritable();
 string getNavigationUrl();
 string getGlobalVars();
 void setGlobalArgs(const json &args);

@@ -118,8 +118,10 @@ using WebKitUserContentManager = struct _WebKitUserContentManager;
 using WebKitUserScript = struct _WebKitUserScript;
 using WebKitPolicyDecision = struct _WebKitPolicyDecision;
 using WebKitNavigationPolicyDecision = struct _WebKitNavigationPolicyDecision;
-using WebKitNavigationAction = struct _WebKitNavigationAction;
 using WebKitURIRequest = struct _WebKitURIRequest;
+using WebKitWebsiteDataManager = struct _WebKitWebsiteDataManager;
+using WebKitWebContext = struct _WebKitWebContext;
+using WebKitCookieManager = struct _WebKitCookieManager;
 
 enum WebKitUserContentInjectedFrames {
   WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES,
@@ -140,9 +142,22 @@ enum WebKitNavigationType {
   WEBKIT_NAVIGATION_TYPE_LINK_CLICKED
 };
 
+enum WebKitCookiePersistentStorage {
+  WEBKIT_COOKIE_PERSISTENT_STORAGE_TEXT,
+  WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE
+};
+
 using webkit_web_view_new_func = std::add_pointer<GtkWidget*()>::type;
+using webkit_web_view_new_with_context_func = std::add_pointer<GtkWidget*(WebKitWebContext*)>::type;
+using webkit_website_data_manager_new_func = WebKitWebsiteDataManager*(*)(const gchar*, ...);
+using webkit_web_context_new_with_website_data_manager_func = std::add_pointer<WebKitWebContext*(WebKitWebsiteDataManager*)>::type;
+using webkit_website_data_manager_get_cookie_manager_func = std::add_pointer<WebKitCookieManager*(WebKitWebsiteDataManager*)>::type;
+using webkit_cookie_manager_set_persistent_storage_func = std::add_pointer<void(WebKitCookieManager*, const gchar*, WebKitCookiePersistentStorage)>::type;
 using webkit_web_view_get_settings_func = std::add_pointer<WebKitSettings*(WebKitWebView*)>::type;
 using webkit_settings_set_javascript_can_access_clipboard_func = std::add_pointer<void(WebKitSettings*, bool)>::type;
+using webkit_settings_set_enable_html5_local_storage_func = std::add_pointer<void(WebKitSettings*, bool)>::type;
+using webkit_settings_set_enable_html5_database_func = std::add_pointer<void(WebKitSettings*, bool)>::type;
+using webkit_settings_set_enable_page_cache_func = std::add_pointer<void(WebKitSettings*, bool)>::type;
 using webkit_settings_set_enable_write_console_messages_to_stdout_func = std::add_pointer<void(WebKitSettings*, bool)>::type;
 using webkit_settings_set_enable_developer_extras_func = std::add_pointer<void(WebKitSettings*, bool)>::type;
 using webkit_web_view_get_inspector_func = std::add_pointer<WebKitWebInspector*(WebKitWebView*)>::type;
@@ -163,8 +178,16 @@ using webkit_policy_decision_ignore_func = std::add_pointer<void(WebKitPolicyDec
 namespace webview {
 
 static webkit_web_view_new_func webkit_web_view_new = nullptr;
+static webkit_web_view_new_with_context_func webkit_web_view_new_with_context = nullptr;
+static webkit_website_data_manager_new_func webkit_website_data_manager_new = nullptr;
+static webkit_web_context_new_with_website_data_manager_func webkit_web_context_new_with_website_data_manager = nullptr;
+static webkit_website_data_manager_get_cookie_manager_func webkit_website_data_manager_get_cookie_manager = nullptr;
+static webkit_cookie_manager_set_persistent_storage_func webkit_cookie_manager_set_persistent_storage = nullptr;
 static webkit_web_view_get_settings_func webkit_web_view_get_settings = nullptr;
 static webkit_settings_set_javascript_can_access_clipboard_func webkit_settings_set_javascript_can_access_clipboard = nullptr;
+static webkit_settings_set_enable_html5_local_storage_func webkit_settings_set_enable_html5_local_storage = nullptr;
+static webkit_settings_set_enable_html5_database_func webkit_settings_set_enable_html5_database = nullptr;
+static webkit_settings_set_enable_page_cache_func webkit_settings_set_enable_page_cache = nullptr;
 static webkit_settings_set_enable_write_console_messages_to_stdout_func webkit_settings_set_enable_write_console_messages_to_stdout = nullptr;
 static webkit_settings_set_enable_developer_extras_func webkit_settings_set_enable_developer_extras = nullptr;
 static webkit_web_view_get_inspector_func webkit_web_view_get_inspector = nullptr;
@@ -191,8 +214,20 @@ public:
         
     setlocale(LC_ALL, "");
 
+    // Avoid Wayland protocol error 71 crashes with WebKitGTK's DMABUF renderer
+    if(getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == nullptr) {
+      setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 0);
+    }
+
     XInitThreads();
     gtk_init_check(0, NULL);
+
+    const gchar *prgname = g_get_prgname();
+    if(prgname && prgname[0] != '\0') {
+      gdk_set_program_class(prgname);
+      gtk_window_set_default_icon_name(prgname);
+    }
+
     m_window = static_cast<GtkWidget *>(window);
     if (m_window == nullptr) {
       m_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -276,8 +311,16 @@ public:
     }
 
     webkit_web_view_new = (webkit_web_view_new_func)(dlsym(dlib, "webkit_web_view_new"));
+    webkit_web_view_new_with_context = (webkit_web_view_new_with_context_func)(dlsym(dlib, "webkit_web_view_new_with_context"));
+    webkit_website_data_manager_new = (webkit_website_data_manager_new_func)(dlsym(dlib, "webkit_website_data_manager_new"));
+    webkit_web_context_new_with_website_data_manager = (webkit_web_context_new_with_website_data_manager_func)(dlsym(dlib, "webkit_web_context_new_with_website_data_manager"));
+    webkit_website_data_manager_get_cookie_manager = (webkit_website_data_manager_get_cookie_manager_func)(dlsym(dlib, "webkit_website_data_manager_get_cookie_manager"));
+    webkit_cookie_manager_set_persistent_storage = (webkit_cookie_manager_set_persistent_storage_func)(dlsym(dlib, "webkit_cookie_manager_set_persistent_storage"));
     webkit_web_view_get_settings = (webkit_web_view_get_settings_func)(dlsym(dlib, "webkit_web_view_get_settings"));
     webkit_settings_set_javascript_can_access_clipboard = (webkit_settings_set_javascript_can_access_clipboard_func)(dlsym(dlib, "webkit_settings_set_javascript_can_access_clipboard"));
+    webkit_settings_set_enable_html5_local_storage = (webkit_settings_set_enable_html5_local_storage_func)(dlsym(dlib, "webkit_settings_set_enable_html5_local_storage"));
+    webkit_settings_set_enable_html5_database = (webkit_settings_set_enable_html5_database_func)(dlsym(dlib, "webkit_settings_set_enable_html5_database"));
+    webkit_settings_set_enable_page_cache = (webkit_settings_set_enable_page_cache_func)(dlsym(dlib, "webkit_settings_set_enable_page_cache"));
     webkit_settings_set_enable_write_console_messages_to_stdout = (webkit_settings_set_enable_write_console_messages_to_stdout_func)(dlsym(dlib, "webkit_settings_set_enable_write_console_messages_to_stdout"));
     webkit_settings_set_enable_developer_extras = (webkit_settings_set_enable_developer_extras_func)(dlsym(dlib, "webkit_settings_set_enable_developer_extras"));
     webkit_web_view_get_inspector = (webkit_web_view_get_inspector_func)(dlsym(dlib, "webkit_web_view_get_inspector"));
@@ -295,8 +338,42 @@ public:
     webkit_navigation_action_get_navigation_type = (webkit_navigation_action_get_navigation_type_func)(dlsym(dlib, "webkit_navigation_action_get_navigation_type"));
     webkit_policy_decision_ignore = (webkit_policy_decision_ignore_func)(dlsym(dlib, "webkit_policy_decision_ignore"));
 
-    // Initialize webview widget
-    m_webview = webkit_web_view_new();
+    // Configure persistent storage directories for WebKit
+    std::string appFolder = (prgname && prgname[0] != '\0') ? std::string(prgname) : "weekbox";
+    const char *userDataDir = g_get_user_data_dir();
+    const char *userCacheDir = g_get_user_cache_dir();
+    std::string wkDataDir = (userDataDir ? std::string(userDataDir) : "/tmp") + "/" + appFolder + "/webkit";
+    std::string wkCacheDir = (userCacheDir ? std::string(userCacheDir) : "/tmp") + "/" + appFolder + "/webkit";
+    g_mkdir_with_parents(wkDataDir.c_str(), 0700);
+    g_mkdir_with_parents(wkCacheDir.c_str(), 0700);
+
+    WebKitWebContext *webContext = nullptr;
+    if(webkit_website_data_manager_new && webkit_web_context_new_with_website_data_manager && webkit_web_view_new_with_context) {
+      WebKitWebsiteDataManager *dataManager = webkit_website_data_manager_new(
+          "base-data-directory", wkDataDir.c_str(),
+          "base-cache-directory", wkCacheDir.c_str(),
+          nullptr);
+      if(dataManager) {
+        if(webkit_website_data_manager_get_cookie_manager && webkit_cookie_manager_set_persistent_storage) {
+          WebKitCookieManager *cookieManager = webkit_website_data_manager_get_cookie_manager(dataManager);
+          if(cookieManager) {
+            std::string cookieFile = wkDataDir + "/cookies.sqlite";
+            webkit_cookie_manager_set_persistent_storage(
+                cookieManager, cookieFile.c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
+          }
+        }
+        webContext = webkit_web_context_new_with_website_data_manager(dataManager);
+        g_object_unref(dataManager);
+      }
+    }
+
+    if(webContext) {
+      m_webview = webkit_web_view_new_with_context(webContext);
+      g_object_unref(webContext);
+    }
+    else {
+      m_webview = webkit_web_view_new();
+    }
 
     GtkWidget *parentContainer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_box_pack_start(GTK_BOX(parentContainer), GTK_WIDGET(m_webview), true, true, 0);    
@@ -307,6 +384,15 @@ public:
     WebKitSettings *settings =
         webkit_web_view_get_settings((WebKitWebView*)(m_webview));
     webkit_settings_set_javascript_can_access_clipboard(settings, true);
+    if(webkit_settings_set_enable_html5_local_storage) {
+      webkit_settings_set_enable_html5_local_storage(settings, true);
+    }
+    if(webkit_settings_set_enable_html5_database) {
+      webkit_settings_set_enable_html5_database(settings, true);
+    }
+    if(webkit_settings_set_enable_page_cache) {
+      webkit_settings_set_enable_page_cache(settings, true);
+    }
     if (debug) {
       webkit_settings_set_enable_write_console_messages_to_stdout(settings,
                                                                   true);
@@ -327,7 +413,7 @@ public:
     }
     webkit_web_view_set_background_color((WebKitWebView*)(m_webview), &color);
 
-    gtk_widget_show_all(m_window);
+    gtk_widget_show_all(parentContainer);
 
     g_signal_connect(G_OBJECT(m_webview), "decide-policy",
       G_CALLBACK(+[](WebKitWebView*, WebKitPolicyDecision* decision, WebKitPolicyDecisionType type, gpointer) {
@@ -690,15 +776,44 @@ public:
     // Webview
     id config =
         ((id(*)(id, SEL))objc_msgSend)("WKWebViewConfiguration"_cls, "new"_sel);
+    id defaultStore =
+        ((id(*)(id, SEL))objc_msgSend)("WKWebsiteDataStore"_cls, "defaultDataStore"_sel);
+    if(defaultStore) {
+      ((void (*)(id, SEL, id))objc_msgSend)(config, "setWebsiteDataStore:"_sel, defaultStore);
+    }
+    ((void (*)(id, SEL, id))objc_msgSend)(
+        config, "setApplicationNameForUserAgent:"_sel, "WeekBox"_str);
+
     m_manager =
         ((id(*)(id, SEL))objc_msgSend)(config, "userContentController"_sel);
     m_webview = ((id(*)(id, SEL))objc_msgSend)("WKWebView"_cls, "alloc"_sel);
+
+    id prefs = ((id(*)(id, SEL))objc_msgSend)(config, "preferences"_sel);
+    if(((BOOL (*)(id, SEL, SEL))objc_msgSend)(
+        prefs, "respondsToSelector:"_sel, "_setLocalStorageEnabled:"_sel)) {
+      ((void (*)(id, SEL, BOOL))objc_msgSend)(prefs, "_setLocalStorageEnabled:"_sel, 1);
+    }
+    const char *homeDir = getenv("HOME");
+    if(homeDir && ((BOOL (*)(id, SEL, SEL))objc_msgSend)(
+        prefs, "respondsToSelector:"_sel, "_setLocalStorageDatabasePath:"_sel)) {
+      std::string lsDir = std::string(homeDir) + "/Library/Application Support/com.weekbox.app/WebKit/LocalStorage";
+      id fileMgr = ((id(*)(id, SEL))objc_msgSend)("NSFileManager"_cls, "defaultManager"_sel);
+      id nsLsDir = ((id(*)(id, SEL, const char *))objc_msgSend)(
+          "NSString"_cls, "stringWithUTF8String:"_sel, lsDir.c_str());
+      if(fileMgr && nsLsDir) {
+        ((BOOL (*)(id, SEL, id, BOOL, id, id))objc_msgSend)(
+            fileMgr, "createDirectoryAtPath:withIntermediateDirectories:attributes:error:"_sel,
+            nsLsDir, 1, nullptr, nullptr);
+        ((void (*)(id, SEL, id))objc_msgSend)(
+            prefs, "_setLocalStorageDatabasePath:"_sel, nsLsDir);
+      }
+    }
 
     if (debug) {
       // Equivalent Obj-C:
       // [[config preferences] setValue:@YES forKey:@"developerExtrasEnabled"];
       ((id(*)(id, SEL, id, id))objc_msgSend)(
-          ((id(*)(id, SEL))objc_msgSend)(config, "preferences"_sel),
+          prefs,
           "setValue:forKey:"_sel,
           ((id(*)(id, SEL, BOOL))objc_msgSend)("NSNumber"_cls,
                                                "numberWithBool:"_sel, 1),
@@ -708,7 +823,7 @@ public:
     // Equivalent Obj-C:
     // [[config preferences] setValue:@YES forKey:@"fullScreenEnabled"];
     ((id(*)(id, SEL, id, id))objc_msgSend)(
-        ((id(*)(id, SEL))objc_msgSend)(config, "preferences"_sel),
+        prefs,
         "setValue:forKey:"_sel,
         ((id(*)(id, SEL, BOOL))objc_msgSend)("NSNumber"_cls,
                                              "numberWithBool:"_sel, 1),
@@ -717,7 +832,7 @@ public:
     // Equivalent Obj-C:
     // [[config preferences] setValue:@YES forKey:@"javaScriptCanAccessClipboard"];
     ((id(*)(id, SEL, id, id))objc_msgSend)(
-        ((id(*)(id, SEL))objc_msgSend)(config, "preferences"_sel),
+        prefs,
         "setValue:forKey:"_sel,
         ((id(*)(id, SEL, BOOL))objc_msgSend)("NSNumber"_cls,
                                              "numberWithBool:"_sel, 1),
@@ -726,7 +841,7 @@ public:
     // Equivalent Obj-C:
     // [[config preferences] setValue:@YES forKey:@"DOMPasteAllowed"];
     ((id(*)(id, SEL, id, id))objc_msgSend)(
-        ((id(*)(id, SEL))objc_msgSend)(config, "preferences"_sel),
+        prefs,
         "setValue:forKey:"_sel,
         ((id(*)(id, SEL, BOOL))objc_msgSend)("NSNumber"_cls,
                                              "numberWithBool:"_sel, 1),
@@ -1060,7 +1175,10 @@ public:
         GetTempPathW(MAX_PATH, tempPath);
         userDataFolder = std::wstring(tempPath);
     }
-    std::wstring currentExeNameW = currentExeName ? std::wstring(currentExeName) : L"neutralino";
+    std::wstring currentExeNameW = currentExeName ? std::wstring(currentExeName) : L"weekbox";
+    if(currentExeNameW.find(L"neutralino") != std::wstring::npos) {
+        currentExeNameW = L"weekbox";
+    }
 
     // Ensure the user data folder path is properly formatted
     if (!userDataFolder.empty() && userDataFolder.back() != L'\\' && userDataFolder.back() != L'/') {
@@ -1337,7 +1455,7 @@ public:
       ZeroMemory(&wc, sizeof(WNDCLASSEX));
       wc.cbSize = sizeof(WNDCLASSEX);
       wc.hInstance = hInstance;
-      wc.lpszClassName = L"Neutralinojs_webview";
+      wc.lpszClassName = L"WeekBox_webview";
       wc.hIcon = icon;
       wc.hIconSm = icon;
       wc.lpfnWndProc =
@@ -1452,7 +1570,7 @@ public:
       RegisterClassEx(&wc);
       int width = transparent ? 8000 : 640;
       int height = transparent ? 8000 : 480;
-      m_window = CreateWindow(L"Neutralinojs_webview", L"", WS_OVERLAPPEDWINDOW, 99999999,
+      m_window = CreateWindow(L"WeekBox_webview", L"", WS_OVERLAPPEDWINDOW, 99999999,
                               CW_USEDEFAULT, width, height, nullptr, nullptr,
                               GetModuleHandle(nullptr), nullptr);
       SetWindowLongPtr(m_window, GWLP_USERDATA, (LONG_PTR)this);

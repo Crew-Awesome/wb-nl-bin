@@ -42,7 +42,7 @@ static void tray_update(struct tray *tray);
 #include <gtk/gtk.h>
 #include <dlfcn.h>
 
-#define TRAY_APPINDICATOR_ID "tray-id"
+#define TRAY_APPINDICATOR_ID "weekbox"
 
 typedef enum {
   APP_INDICATOR_CATEGORY_APPLICATION_STATUS,
@@ -148,7 +148,7 @@ static int tray_init(struct tray *tray) {
     return -1;
   }
 
-  indicator = app_indicator_new(TRAY_APPINDICATOR_ID, tray->icon,
+  indicator = app_indicator_new(TRAY_APPINDICATOR_ID, tray->icon ? tray->icon : TRAY_APPINDICATOR_ID,
                                 APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
   app_indicator_set_status(indicator, APP_INDICATOR_STATUS_ACTIVE);
   tray_update(tray);
@@ -161,7 +161,7 @@ static int tray_loop(int blocking) {
 }
 
 static void tray_update(struct tray *tray) {
-  app_indicator_set_icon(indicator, tray->icon);
+  app_indicator_set_icon(indicator, tray->icon ? tray->icon : TRAY_APPINDICATOR_ID);
   // GTK is all about reference counting, so previous menu should be destroyed
   // here
   app_indicator_set_menu(indicator, GTK_MENU(_tray_menu(tray->menu)));
@@ -411,7 +411,7 @@ static HMENU _tray_menu(struct tray_menu *m, UINT *id) {
 
 static int tray_init(struct tray *tray) {
 
-  hwnd = FindWindow(L"Neutralinojs_webview", NULL);
+  hwnd = FindWindow(L"WeekBox_webview", NULL);
   if (hwnd == NULL) {
     return -1;
   }

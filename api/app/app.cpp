@@ -42,6 +42,7 @@ void exit(int code) {
         // wait for in-flight native calls, and close the UI from a coordinator
         // thread that can safely join the worker pool.
         thread shutdownThread([code]() {
+            helpers::setThreadName(settings::getProcessName() + "-exit");
             neuserver::stop();
             neuserver::waitForNativeWorkers();
             try {

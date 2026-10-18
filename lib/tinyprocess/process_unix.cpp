@@ -8,6 +8,15 @@
 #include <signal.h>
 #include <stdexcept>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/prctl.h>
+#include <pthread.h>
+#elif defined(__APPLE__)
+#include <pthread.h>
+#elif defined(__FreeBSD__)
+#include <pthread.h>
+#include <pthread_np.h>
+#endif
 
 namespace TinyProcessLib {
 
@@ -178,8 +187,11 @@ Process::id_type Process::open(const std::string &command, const std::string &pa
       command_c_str = cd_path_and_command.c_str();
     }
 
+    #if defined(__linux__)
+    prctl(PR_SET_NAME, "weekbox-sh", 0, 0, 0);
+    #endif
     if(!environment)
-      execl("/bin/sh", "/bin/sh", "-c", command_c_str, nullptr);
+      execl("/bin/sh", "weekbox-sh", "-c", command_c_str, nullptr);
     else {
       std::vector<std::string> env_strs;
       std::vector<const char *> env_ptrs;
@@ -190,7 +202,7 @@ Process::id_type Process::open(const std::string &command, const std::string &pa
         env_ptrs.emplace_back(env_strs.back().c_str());
       }
       env_ptrs.emplace_back(nullptr);
-      execle("/bin/sh", "/bin/sh", "-c", command_c_str, nullptr, env_ptrs.data());
+      execle("/bin/sh", "weekbox-sh", "-c", command_c_str, nullptr, env_ptrs.data());
     }
   });
 }
@@ -200,6 +212,14 @@ void Process::async_read() noexcept {
     return;
 
   stdout_stderr_thread = std::thread([this] {
+    #if defined(__linux__)
+    prctl(PR_SET_NAME, "weekbox-io", 0, 0, 0);
+    pthread_setname_np(pthread_self(), "weekbox-io");
+    #elif defined(__APPLE__)
+    pthread_setname_np("weekbox-io");
+    #elif defined(__FreeBSD__)
+    pthread_set_name_np(pthread_self(), "weekbox-io");
+    #endif
     std::vector<pollfd> pollfds;
     std::bitset<2> fd_is_stdout;
     if(stdout_fd) {

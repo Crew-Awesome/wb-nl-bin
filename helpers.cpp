@@ -12,7 +12,24 @@
 #include "helpers.h"
 #include "lib/json/json.hpp"
 
-#if defined(_WIN32)
+#if defined(__linux__)
+#include <sys/prctl.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <limits.h>
+#include <cstring>
+#elif defined(__APPLE__)
+#include <pthread.h>
+#include <mach-o/dyld.h>
+#include <objc/objc-runtime.h>
+#include <limits.h>
+#include <cstdlib>
+#elif defined(__FreeBSD__)
+#include <pthread.h>
+#include <pthread_np.h>
+#include <unistd.h>
+#include <limits.h>
+#elif defined(_WIN32)
 #include <string>
 #include <windows.h>
 #endif
@@ -288,6 +305,126 @@ vector<string> tokenizeCommand(const string &command) {
     }
     flushToken();
     return tokens;
+}
+
+void setThreadName(const string &name) {
+    if(name.empty()) {
+        return;
+    }
+    #if defined(__linux__)
+    string shortName = name.substr(0, 15);
+    prctl(PR_SET_NAME, shortName.c_str(), 0, 0, 0);
+    pthread_setname_np(pthread_self(), shortName.c_str());
+    #elif defined(__APPLE__)
+    string shortName = name.substr(0, 63);
+    pthread_setname_np(shortName.c_str());
+    #elif defined(__FreeBSD__)
+    string shortName = name.substr(0, 15);
+    pthread_set_name_np(pthread_self(), shortName.c_str());
+    #elif defined(_WIN32)
+    using SetThreadDescriptionFunc = HRESULT(WINAPI *)(HANDLE, PCWSTR);
+    static auto setThreadDesc = reinterpret_cast<SetThreadDescriptionFunc>(
+        GetProcAddress(GetModuleHandleW(L"Kernel32.dll"), "SetThreadDescription"));
+    if(setThreadDesc) {
+        wstring wname = str2wstr(name);
+        setThreadDesc(GetCurrentThread(), wname.c_str());
+    }
+    #endif
+}
+
+void setProcessName(const string &name, int argc, char **argv) {
+    if(name.empty()) {
+        return;
+    }
+    setThreadName(name);
+
+    #if defined(__linux__)
+    if(argc > 0 && argv && argv[0]) {
+        string currentArg0(argv[0]);
+        string lowerArg0 = currentArg0;
+        transform(lowerArg0.begin(), lowerArg0.end(), lowerArg0.begin(),
+            [](unsigned char c) { return static_cast<char>(tolower(c)); });
+        if(lowerArg0.find("neutralino") != string::npos) {
+            size_t availLen = strlen(argv[0]);
+            if(availLen > 0) {
+                memset(argv[0], 0, availLen);
+                size_t copyLen = min(name.size(), availLen);
+                memcpy(argv[0], name.data(), copyLen);
+            }
+        }
+    }
+    #elif defined(__APPLE__)
+    (void)argc;
+    (void)argv;
+    id procInfoCls = (id)objc_getClass("NSProcessInfo");
+    if(procInfoCls) {
+        id procInfo = ((id (*)(id, SEL))objc_msgSend)(
+            procInfoCls, sel_registerName("processInfo"));
+        id nsName = ((id (*)(id, SEL, const char *))objc_msgSend)(
+            (id)objc_getClass("NSString"),
+            sel_registerName("stringWithUTF8String:"),
+            name.c_str());
+        if(procInfo && nsName) {
+            ((void (*)(id, SEL, id))objc_msgSend)(
+                procInfo, sel_registerName("setProcessName:"), nsName);
+        }
+    }
+    #elif defined(__FreeBSD__)
+    (void)argc;
+    (void)argv;
+    setproctitle("-%s", name.c_str());
+    #else
+    (void)argc;
+    (void)argv;
+    #endif
+}
+
+string getExecutableDir() {
+    #if defined(__linux__) || defined(__FreeBSD__)
+    char buf[PATH_MAX] = {0};
+    #if defined(__linux__)
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    #else
+    ssize_t len = readlink("/proc/curproc/file", buf, sizeof(buf) - 1);
+    #endif
+    if(len > 0) {
+        buf[len] = '\0';
+        string fullPath(buf);
+        size_t slashPos = fullPath.find_last_of('/');
+        if(slashPos != string::npos) {
+            string dir = slashPos == 0 ? "/" : fullPath.substr(0, slashPos);
+            return normalizePath(dir);
+        }
+    }
+    return "";
+    #elif defined(__APPLE__)
+    char buf[PATH_MAX] = {0};
+    uint32_t size = sizeof(buf);
+    if(_NSGetExecutablePath(buf, &size) == 0) {
+        char resolved[PATH_MAX] = {0};
+        const char *pathPtr = realpath(buf, resolved) ? resolved : buf;
+        string fullPath(pathPtr);
+        size_t slashPos = fullPath.find_last_of('/');
+        if(slashPos != string::npos) {
+            string dir = slashPos == 0 ? "/" : fullPath.substr(0, slashPos);
+            return normalizePath(dir);
+        }
+    }
+    return "";
+    #elif defined(_WIN32)
+    wchar_t wbuf[MAX_PATH] = {0};
+    DWORD len = GetModuleFileNameW(nullptr, wbuf, MAX_PATH);
+    if(len > 0 && len < MAX_PATH) {
+        string fullPath = wstr2str(wstring(wbuf, len));
+        fullPath = normalizePath(fullPath);
+        size_t slashPos = fullPath.find_last_of('/');
+        if(slashPos != string::npos) {
+            string dir = fullPath.substr(0, slashPos);
+            return normalizePath(dir);
+        }
+    }
+    return "";
+    #endif
 }
 
 } // namespace helpers

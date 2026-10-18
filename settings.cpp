@@ -5,6 +5,12 @@
 #include <map>
 #include <set>
 #include <clocale>
+#include <cstdlib>
+#if !defined(_WIN32)
+#include <unistd.h>
+#else
+#include <windows.h>
+#endif
 
 #include "lib/json/json.hpp"
 #include "settings.h"
@@ -55,6 +61,24 @@ string getAppPath() {
 
 string getConfigFile() {
     return configFile;
+}
+
+bool isAppPathWritable() {
+    if(appPath.empty()) {
+        return false;
+    }
+    #if defined(__linux__)
+    // AppImage mounts under /tmp/.mount_* are ephemeral squashfs images
+    if(getenv("APPIMAGE") != nullptr && appPath.rfind("/tmp/.mount_", 0) == 0) {
+        return false;
+    }
+    #endif
+    #if !defined(_WIN32)
+    return access(appPath.c_str(), W_OK) == 0;
+    #else
+    DWORD attrs = GetFileAttributesW(helpers::str2wstr(appPath).c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_READONLY);
+    #endif
 }
 
 bool init() {
@@ -112,8 +136,10 @@ bool init() {
     if(!jLoc.is_null()) {
         dataLoc = jLoc.get<string>();
     }
-    
-    appDataPath = dataLoc == "system" ? systemDataPath : appPath;
+
+    // Fall back to user data dir when installed in read-only locations (/usr/lib, /Applications, etc.)
+    bool useSystemData = (dataLoc == "system") || !isAppPathWritable();
+    appDataPath = useSystemData ? systemDataPath : appPath;
 
     return true;
 }
@@ -128,7 +154,22 @@ string getAppId() {
         appId = regex_replace(appId, regex("[^\\w.]"), "");
         return regex_replace(appId, regex("[.]{2,}"), ".");
     }
-    return "js.neutralino.framework";
+    return "com.weekbox.app";
+}
+
+string getProcessName() {
+    string name = "weekbox";
+    if(options.contains("cli") && options["cli"].is_object() &&
+       options["cli"].contains("binaryName") && options["cli"]["binaryName"].is_string()) {
+        string binName = options["cli"]["binaryName"].get<string>();
+        transform(binName.begin(), binName.end(), binName.begin(),
+            [](unsigned char c) { return static_cast<char>(tolower(c)); });
+        binName = regex_replace(binName, regex("[^a-z0-9_-]"), "");
+        if(!binName.empty() && binName.find("neutralino") == string::npos) {
+            name = binName;
+        }
+    }
+    return name;
 }
 
 string getNavigationUrl() {
@@ -191,9 +232,15 @@ void setGlobalArgs(const json &args) {
 
         // Set default path
         if(argIndex == 0) {
-            appPath = fs::getDirectoryName(arg);
-            if(appPath == "")
-                appPath = fs::getCurrentDirectory();
+            if(arg.find('/') == string::npos && arg.find('\\') == string::npos) {
+                string exeDir = helpers::getExecutableDir();
+                appPath = !exeDir.empty() ? exeDir : fs::getCurrentDirectory();
+            }
+            else {
+                appPath = fs::getDirectoryName(arg);
+                if(appPath == "")
+                    appPath = fs::getCurrentDirectory();
+            }
         }
 
         // DEPRECATED: Resources read mode (resources.neu or from directory)
@@ -325,7 +372,9 @@ void applyConfigOverride(const settings::CliArg &arg) {
         "/enableNativeAPI",
         "/singlePageServe",
         "/enableExtensions",
-        "/exportAuthInfo"
+        "/exportAuthInfo",
+        "/dataLocation",
+        "/storageLocation"
     };
 
     if(cliMappings.find(arg.key) != cliMappings.end()) {

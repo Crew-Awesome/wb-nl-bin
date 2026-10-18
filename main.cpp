@@ -159,7 +159,7 @@ void __startServerAsync() {
         }
         catch(websocketpp::exception &e) {
             json jPort = settings::getOptionForCurrentMode("port");
-            string errorMsg = "Neutralinojs can't initialize the application server";
+            string errorMsg = "Unable to initialize the application server";
             if(!jPort.is_null()) {
                 errorMsg += " on port: " + to_string(jPort.get<int>());
             }
@@ -245,10 +245,16 @@ int main(int argc, char ** argv)
     for (int i = 0; i < ARG_C; i++) {
         args.push_back(CONVWCSTR(ARG_V[i]));
     }
+    helpers::setProcessName("weekbox");
     #if defined(_WIN32)
     __attachConsole();
     #endif
     __initFramework(args);
+    #if defined(_WIN32)
+    helpers::setProcessName(settings::getProcessName());
+    #else
+    helpers::setProcessName(settings::getProcessName(), argc, argv);
+    #endif
     __registerCleanupHandlers();
     __startServerAsync();
     __configureLogger();

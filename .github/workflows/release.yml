@@ -10,13 +10,16 @@ on:
       version: 
         type: string
         required: false
-        description: "Version number e.g., 4.2.0"
-  schedule:
-    - cron: 0 0 * * *
+        description: "Version number e.g., 6.10.0 or latest"
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
 
 env:
-  VERSION: ${{inputs.version || 'nightly'}}
-  VERSION_WITH_V: ${{inputs.version != '' && format('v{0}', inputs.version) || 'nightly'}}
+  VERSION: ${{ inputs.version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || (github.ref == 'refs/heads/main' && 'latest') || 'nightly' }}
+  VERSION_WITH_V: ${{ inputs.version != '' && (startsWith(inputs.version, 'v') && inputs.version || format('v{0}', inputs.version)) || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || (github.ref == 'refs/heads/main' && 'v-latest') || 'nightly' }}
 
 jobs:
   release-info:
@@ -217,92 +220,26 @@ jobs:
     - name: Create release ZIP
       working-directory: ./bin
       run: |
-        zip neutralinojs-${VERSION_WITH_V}.zip \
-        neutralino-linux_x64 \
-        neutralino-linux_arm64 \
-        neutralino-linux_armhf \
-        neutralino-win_x64.exe \
-        neutralino-mac_x64 \
-        neutralino-mac_arm64 \
-        neutralino-mac_universal
-        
-    - name: Create release notes
+        zip -9 neutralinojs-${VERSION_WITH_V}.zip \
+          neutralino-linux_x64 \
+          neutralino-linux_arm64 \
+          neutralino-linux_armhf \
+          neutralino-win_x64.exe \
+          neutralino-mac_x64 \
+          neutralino-mac_arm64 \
+          neutralino-mac_universal
+
+    - name: Publish GitHub Release
+      env:
+        GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
       run: |
-        chmod +x ./scripts/rz.py
-        if [[ "$VERSION" != "nightly" ]]; then
-            ./scripts/rz.py create $VERSION
+        if gh release view "$VERSION_WITH_V" &> /dev/null; then
+          echo "Updating existing release: $VERSION_WITH_V"
+          gh release upload "$VERSION_WITH_V" "./bin/neutralinojs-${VERSION_WITH_V}.zip" --clobber
         else
-          ./scripts/rz.py create nightly \
-            --no-changes \
-            --top=":warning: **Nightly build**: This nightly-release may contain experimental features and breaking changes."
+          echo "Creating new release: $VERSION_WITH_V"
+          gh release create "$VERSION_WITH_V" \
+            "./bin/neutralinojs-${VERSION_WITH_V}.zip" \
+            --title "WeekBox Neutralino Runtime $VERSION_WITH_V" \
+            --generate-notes
         fi
-
-    - name: Delete release tag
-      run: |
-        if gh release view $VERSION_WITH_V &> /dev/null; then
-          gh release delete $VERSION_WITH_V --cleanup-tag --yes
-        fi
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Create a new branch for the release
-      run: |
-        if git ls-remote --exit-code --heads origin $VERSION_WITH_V; then
-          git push origin -d $VERSION_WITH_V
-        fi
-        git checkout -b $VERSION_WITH_V
-        git push origin $VERSION_WITH_V
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Create the new release
-      run: |
-          if [[ "$VERSION" != "nightly" ]]; then
-            gh release create $VERSION_WITH_V \
-              ./bin/neutralinojs-${VERSION_WITH_V}.zip \
-              --title "Neutralinojs $VERSION_WITH_V released!" \
-              --notes-file .tmprz/release_notes.md
-          else
-            gh release create nightly \
-              ./bin/neutralinojs-nightly.zip \
-              --title "Neutralinojs nightly release" \
-              --notes-file .tmprz/release_notes.md \
-              --prerelease
-          fi
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Send a pull request for the modified changelog
-      if: ${{ env.VERSION != 'nightly' }}
-      run: |
-        branch=changelog-update-$VERSION_WITH_V
-        git checkout -b $branch
-        git add CHANGELOG.md
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git commit -m "Update changelog for $VERSION_WITH_V"
-        git push origin $branch
-        gh pr create \
-          --title "Update changelog after $VERSION_WITH_V release" \
-          --body "This pull request updates CHANGELOG.md file after the recent release." \
-          --assignee "${{github.actor}}"
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-    - name: Clean release notes
-      run: |
-          ./scripts/rz.py cleanup
-        
-  announcement:
-    needs: [create-release]
-    runs-on: ubuntu-latest
-    steps:
-    - name: Send a Discord message
-      if: ${{ env.VERSION != 'nightly' }}
-      env:
-        DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-      uses: Ilshidur/action-discord@master
-      with:
-        args: |
-          Neutralinojs ${{ env.VERSION_WITH_V }} released 🚀
-          Changelog: https://github.com/neutralinojs/neutralinojs/releases/tag/${{ env.VERSION_WITH_V }}

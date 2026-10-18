@@ -13,9 +13,12 @@
 #if defined(__linux__) || defined(__FreeBSD__)
 #include <type_traits>
 #include <dlfcn.h>
+#include <unistd.h>
 #include <gtk/gtk.h>
 #include <glib.h>
+#include <gio/gio.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include "lib/platformfolders/platform_folders.h"
 
 #elif defined(__APPLE__)
 #include <objc/objc-runtime.h>
@@ -75,6 +78,71 @@ using json = nlohmann::json;
 using namespace Gdiplus;
 #endif
 
+#if defined(__linux__)
+// Route WebKit helper processes through runtime symlinks so they show up
+// under the application's process name instead of WebKit*Process.
+extern "C" GSubprocess* g_subprocess_launcher_spawnv(
+        GSubprocessLauncher *launcher,
+        const gchar * const *argv,
+        GError **error) {
+    using SpawnvFn = GSubprocess* (*)(GSubprocessLauncher*, const gchar * const *, GError**);
+    static SpawnvFn realSpawnv = reinterpret_cast<SpawnvFn>(
+        dlsym(RTLD_NEXT, "g_subprocess_launcher_spawnv"));
+    if(!realSpawnv) {
+        return nullptr;
+    }
+    if(!argv || !argv[0]) {
+        return realSpawnv(launcher, argv, error);
+    }
+
+    string binPath(argv[0]);
+    string baseName = filesystem::path(binPath).filename().string();
+    string procName = settings::getProcessName();
+    string suffix;
+    if(baseName == "WebKitWebProcess") {
+        suffix = "-web";
+    }
+    else if(baseName == "WebKitNetworkProcess") {
+        suffix = "-net";
+    }
+    else if(baseName == "WebKitGPUProcess") {
+        suffix = "-gpu";
+    }
+    else if(baseName.find("WebKit") == 0) {
+        suffix = "-wk";
+    }
+
+    if(suffix.empty()) {
+        return realSpawnv(launcher, argv, error);
+    }
+
+    const char *runtimeDir = getenv("XDG_RUNTIME_DIR");
+    string linkDir = (runtimeDir && runtimeDir[0] != '\0')
+        ? string(runtimeDir) + "/" + procName + "-bin"
+        : sago::getDataHome() + "/" + settings::getAppId() + "/.bin";
+
+    std::error_code ec;
+    filesystem::create_directories(linkDir, ec);
+    string linkPath = linkDir + "/" + procName + suffix;
+    if(filesystem::exists(linkPath, ec) || filesystem::is_symlink(linkPath, ec)) {
+        filesystem::remove(linkPath, ec);
+    }
+    filesystem::create_symlink(binPath, linkPath, ec);
+
+    if(!ec && access(linkPath.c_str(), X_OK) == 0) {
+        vector<const gchar*> modifiedArgv;
+        modifiedArgv.push_back(linkPath.c_str());
+        for(size_t i = 1; argv[i] != nullptr; ++i) {
+            modifiedArgv.push_back(argv[i]);
+        }
+        modifiedArgv.push_back(nullptr);
+        return realSpawnv(launcher, modifiedArgv.data(), error);
+    }
+
+    return realSpawnv(launcher, argv, error);
+}
+#endif
+
 namespace window {
 
 webview::webview *nativeWindow;
@@ -82,6 +150,40 @@ webview::webview *nativeWindow;
 bool isGtkWindowFullScreen = false;
 bool isGtkWindowMinimized = false;
 GtkWidget *menuContainer;
+
+bool __hasDesktopEntry(const string &desktopId) {
+    if(desktopId.empty()) {
+        return false;
+    }
+    std::error_code ec;
+    string fileName = desktopId + ".desktop";
+    vector<string> dirs = {
+        "/usr/share/applications",
+        "/usr/local/share/applications",
+        sago::getDataHome() + "/applications"
+    };
+    for(const auto &dir : dirs) {
+        if(filesystem::exists(dir + "/" + fileName, ec)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+string __resolveDesktopAppId() {
+    vector<string> candidates = {
+        settings::getProcessName(),
+        settings::getAppId(),
+        "weekbox"
+    };
+    for(const auto &id : candidates) {
+        if(__hasDesktopEntry(id)) {
+            return id;
+        }
+    }
+    string procName = settings::getProcessName();
+    return procName.empty() ? "weekbox" : procName;
+}
 
 #elif defined(_WIN32)
 #define ID_MENU_FIRST 20000
@@ -724,9 +826,8 @@ bool __createWindow() {
     savedState = windowProps.useSavedState && __loadSavedWindowProps();
 
     #if defined(__linux__) || defined(__FreeBSD__)
-    // Set the process identity before GTK creates the native window. This is
-    // what desktop shells use for the taskbar/Alt-Tab application identity.
-    g_set_prgname(settings::getAppId().c_str());
+    string desktopAppId = __resolveDesktopAppId();
+    g_set_prgname(desktopAppId.c_str());
     g_set_application_name(windowProps.title.c_str());
     #endif
 
@@ -831,6 +932,13 @@ bool __createWindow() {
 
     if(windowProps.skipTaskbar)
         window::setSkipTaskbar(true);
+
+    #if defined(__linux__) || defined(__FreeBSD__)
+    gtk_widget_realize(windowHandle);
+    if(!windowProps.hidden) {
+        gtk_widget_show_all(windowHandle);
+    }
+    #endif
 
     nativeWindow->navigate(windowProps.url);
 
@@ -1130,6 +1238,50 @@ bool setIcon(const string &iconFile) {
     GdkPixbuf *icon = closed ? gdk_pixbuf_loader_get_pixbuf(loader) : nullptr;
     bool valid = icon != nullptr;
     if(valid) {
+        // Wayland compositors ignore _NET_WM_ICON and resolve the window icon
+        // through the xdg_toplevel app_id -> .desktop entry and hicolor theme.
+        string desktopAppId = __resolveDesktopAppId();
+        string dataHome = sago::getDataHome();
+        if(!dataHome.empty() && !desktopAppId.empty()) {
+            std::error_code ec;
+            string iconThemeDir = dataHome + "/icons";
+            string appsIconDir = iconThemeDir + "/hicolor/256x256/apps";
+            filesystem::create_directories(appsIconDir, ec);
+            string iconPath = appsIconDir + "/" + desktopAppId + ".png";
+            gdk_pixbuf_save(icon, iconPath.c_str(), "png", nullptr, nullptr);
+
+            string appId = settings::getAppId();
+            if(!appId.empty() && appId != desktopAppId) {
+                string altIconPath = appsIconDir + "/" + appId + ".png";
+                gdk_pixbuf_save(icon, altIconPath.c_str(), "png", nullptr, nullptr);
+            }
+
+            GtkIconTheme *theme = gtk_icon_theme_get_default();
+            if(theme) {
+                gtk_icon_theme_append_search_path(theme, iconThemeDir.c_str());
+            }
+
+            if(!__hasDesktopEntry(desktopAppId)) {
+                string desktopDir = dataHome + "/applications";
+                filesystem::create_directories(desktopDir, ec);
+                string desktopFilePath = desktopDir + "/" + desktopAppId + ".desktop";
+                string appTitle = windowProps.title.empty() ? "WeekBox" : windowProps.title;
+                string desktopContent =
+                    "[Desktop Entry]\n"
+                    "Type=Application\n"
+                    "Name=" + appTitle + "\n"
+                    "Icon=" + iconPath + "\n"
+                    "StartupWMClass=" + desktopAppId + "\n"
+                    "NoDisplay=true\n";
+                fs::FileWriterOptions writerOpts = { desktopFilePath, desktopContent };
+                fs::writeFile(writerOpts);
+            }
+
+            gtk_window_set_default_icon_name(desktopAppId.c_str());
+            gtk_window_set_icon_name(GTK_WINDOW(windowHandle), desktopAppId.c_str());
+        }
+
+        gtk_window_set_default_icon(icon);
         gtk_window_set_icon(GTK_WINDOW(windowHandle), icon);
     }
     if(error) {
@@ -1270,6 +1422,8 @@ void setBadge(int count) {
 }
 
 void move(int x, int y) {
+    windowProps.x = x;
+    windowProps.y = y;
     #if defined(__linux__) || defined(__FreeBSD__)
     gtk_window_move(GTK_WINDOW(windowHandle), x, y);
     #elif defined(__APPLE__)
@@ -1344,9 +1498,16 @@ window::SizeOptions getSize() {
 }
 
 pair<int, int> getPosition() {
-    int x, y;
+    int x = windowProps.x, y = windowProps.y;
     #if defined(__linux__) || defined(__FreeBSD__)
-    gdk_window_get_root_origin(gtk_widget_get_window(windowHandle), &x, &y);
+    GdkWindow *gdkWin = gtk_widget_get_window(windowHandle);
+    if(gdkWin) {
+        gdk_window_get_root_origin(gdkWin, &x, &y);
+        if(x == 0 && y == 0 && (windowProps.x != 0 || windowProps.y != 0)) {
+            x = windowProps.x;
+            y = windowProps.y;
+        }
+    }
 
     #elif defined(__APPLE__)
     CGRect frameRect = __getWindowRect();
@@ -1413,7 +1574,11 @@ void setBorderless(bool borderless) {
 
 void setSkipTaskbar(bool skip) {
     #if defined(__linux__) || defined(__FreeBSD__)
-    gdk_window_set_skip_taskbar_hint(gtk_widget_get_window(windowHandle), skip);
+    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(windowHandle), skip);
+    GdkWindow *gdkWin = gtk_widget_get_window(windowHandle);
+    if(gdkWin) {
+        gdk_window_set_skip_taskbar_hint(gdkWin, skip);
+    }
     #elif defined(__APPLE__)
     id app = ((id(*)(id, SEL))objc_msgSend)("NSApplication"_cls,
                                             "sharedApplication"_sel);

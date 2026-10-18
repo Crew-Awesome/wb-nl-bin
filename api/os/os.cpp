@@ -247,6 +247,7 @@ pair<int, int> spawnProcess(string command, const os::ChildProcessOptions &optio
     spawnedProcesses[virtualPid] = childProcess;
 
     thread processThread([=](){
+        helpers::setThreadName(settings::getProcessName() + "-proc");
         int exitCode = childProcess->get_exit_status(); // sync wait
         
         if(options.events) {
@@ -884,15 +885,13 @@ json setTray(const json &input) {
             fullIconPath = string(filesystem::absolute(settings::joinAppPath(iconPath)));
         }
         else {
-            // Use alternating tempIconPath since tray_update()
-            // doesn't update the icon if the path is the same as the previous one,
-            // regardless whether the file contents changed or not.
             useOtherTempTrayIcon = !useOtherTempTrayIcon;
+            string tempDirPath = settings::joinAppDataPath("/.tmp");
+            filesystem::create_directories(CONVSTR(tempDirPath));
             string tempIconPath = settings::joinAppDataPath(
-                    useOtherTempTrayIcon ?  "/.tmp/tray_icon_linux_01.png" : "/.tmp/tray_icon_linux_02.png"
+                    useOtherTempTrayIcon ? "/.tmp/tray_icon_linux_01.png" : "/.tmp/tray_icon_linux_02.png"
             );
 
-            string tempDirPath = settings::joinAppDataPath("/.tmp");;
             resources::extractFile(iconPath, tempIconPath);
             fullIconPath = filesystem::absolute(tempIconPath);
         }

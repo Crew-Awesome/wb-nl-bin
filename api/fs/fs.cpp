@@ -131,7 +131,9 @@ long long __winTickToUnixMS(long long windowsTicks) {
 
 string getDirectoryName(const string &filename){
     #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    return dirname((char*)filename.c_str());
+    vector<char> pathBuf(filename.begin(), filename.end());
+    pathBuf.push_back('\0');
+    return string(dirname(pathBuf.data()));
     #elif defined(_WIN32)
     wstring wideFilename = helpers::str2wstr(filename);
     LPWSTR pathToReplace = &wideFilename[0];

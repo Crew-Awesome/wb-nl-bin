@@ -375,7 +375,8 @@ void __pauseConnection(const websocketpp::connection_hdl &handler) {
     }
 }
 
-void __nativeWorkerLoop() {
+void __nativeWorkerLoop(size_t workerIndex) {
+    helpers::setThreadName(settings::getProcessName() + "-wrk-" + to_string(workerIndex + 1));
     while(true) {
         NativeRequestTask task;
         {
@@ -438,7 +439,7 @@ void __startNativeWorkers() {
     acceptingRequests = true;
     stopping = false;
     for(size_t i = 0; i < WORKER_COUNT; ++i) {
-        nativeWorkers.emplace_back(__nativeWorkerLoop);
+        nativeWorkers.emplace_back(__nativeWorkerLoop, i);
     }
 }
 
@@ -563,12 +564,22 @@ string __getConnectTokenFromUrl(const string &url) {
 
 void __exitProcessIfIdle() {
     thread exitCheckThread([]() {
+        helpers::setThreadName(settings::getProcessName() + "-idle");
         this_thread::sleep_for(10s);
         if(__getAppConnectionCount() == 0) {
             app::exit();
         }
     });
     exitCheckThread.detach();
+}
+
+uint16_t __deriveStablePort(const string &appId) {
+    uint32_t hash = 2166136261u;
+    for(unsigned char c: appId) {
+        hash ^= c;
+        hash *= 16777619u;
+    }
+    return static_cast<uint16_t>(19000 + (hash % 29000));
 }
 
 string init() {
@@ -603,17 +614,42 @@ string init() {
     server->set_error_channels(websocketpp::log::elevel::none);
 
     server->init_asio();
+    #if !defined(_WIN32)
     server->set_reuse_addr(true);
+    #else
+    server->set_reuse_addr(port != 0);
+    #endif
     server->set_max_message_size(MAX_NATIVE_PAYLOAD_BYTES);
 
     string hostAddress = "127.0.0.1";
     if(settings::getMode() == settings::AppModeCloud) {
         hostAddress = "0.0.0.0";
     }
-    websocketpp::lib::asio::ip::tcp::endpoint
-        endpoint(websocketpp::lib::asio::ip::address::from_string(hostAddress), port);
+    auto bindAddr = websocketpp::lib::asio::ip::address::from_string(hostAddress);
+    websocketpp::lib::asio::ip::tcp::endpoint endpoint(bindAddr, port);
 
-    server->listen(endpoint);
+    if(port == 0) {
+        // Keep a consistent localhost port when port=0 so WebView localStorage
+        // and IndexedDB don't get wiped by a random origin on every launch.
+        uint16_t basePort = __deriveStablePort(settings::getAppId());
+        bool bound = false;
+        for(uint16_t offset = 0; offset < 8; ++offset) {
+            websocketpp::lib::asio::ip::tcp::endpoint candidate(
+                bindAddr, static_cast<uint16_t>(basePort + offset));
+            websocketpp::lib::error_code listenEc;
+            server->listen(candidate, listenEc);
+            if(!listenEc) {
+                bound = true;
+                break;
+            }
+        }
+        if(!bound) {
+            server->listen(endpoint);
+        }
+    }
+    else {
+        server->listen(endpoint);
+    }
     listenerStopped = false;
     {
         lock_guard<mutex> lifecycleGuard(ioLifecycleMutex);
@@ -655,7 +691,10 @@ bool isInitialized() {
 
 void startAsync() {
     __startNativeWorkers();
-    serverThread = thread([](){ server->run(); });
+    serverThread = thread([](){
+        helpers::setThreadName(settings::getProcessName() + "-ipc");
+        server->run();
+    });
 }
 
 void stop() {

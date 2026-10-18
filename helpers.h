@@ -48,6 +48,9 @@ string wcstr2str(const wchar_t* wstr);
 
 bool globalMatch(const string &value, const string &pattern);
 vector<string> tokenizeCommand(const string &command);
+void setThreadName(const string &name);
+void setProcessName(const string &name, int argc = 0, char **argv = nullptr);
+string getExecutableDir();
 
 } // namespace helpers
 

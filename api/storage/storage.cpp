@@ -32,8 +32,9 @@ void init() {
     if(!jLoc.is_null()) {
         storageLoc = jLoc.get<string>();
     }
-    
-    storagePath = storageLoc == "system" ? settings::joinSystemDataPath(NEU_STORAGE_DIR) : settings::joinAppPath(NEU_STORAGE_DIR);
+
+    bool useSystemStorage = (storageLoc == "system") || !settings::isAppPathWritable();
+    storagePath = useSystemStorage ? settings::joinSystemDataPath(NEU_STORAGE_DIR) : settings::joinAppPath(NEU_STORAGE_DIR);
 }
 
 namespace controllers {
