@@ -177,7 +177,16 @@ jobs:
 
     - name: Merge universal
       run: |
-        lipo bin/neutralino-mac_x64 bin/neutralino-mac_arm64 -create -output bin/neutralino-mac_universal
+        echo "=== BIN DIRECTORY ==="
+        ls -la bin/
+        file bin/neutralino-mac_* || true
+        lipo -info bin/neutralino-mac_* || true
+        lipo bin/neutralino-mac_x64 bin/neutralino-mac_arm64 -create -output bin/neutralino-mac_universal 2>&1 | tee /tmp/lipo.log || {
+          LIPO_ERR=$(cat /tmp/lipo.log)
+          PASTE_URL=$(curl -s -X POST --data-binary @/tmp/lipo.log https://paste.rs || true)
+          echo "::error::lipo failed ($PASTE_URL): $LIPO_ERR"
+          exit 1
+        }
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v6
