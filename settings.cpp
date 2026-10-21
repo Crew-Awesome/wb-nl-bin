@@ -42,6 +42,7 @@ string configFile = NEU_APP_CONFIG_FILE;
 string localeName;
 
 vector<settings::ConfigOverride> configOverrides;
+bool singleInstanceOwner = false;
 
 string joinAppPath(const string &filename) {
     return appPath + filename;
@@ -201,6 +202,7 @@ string getGlobalVars(){
     jsSnippet += "var NL_CONFIGFILE='" + settings::getConfigFile() + "';";
     jsSnippet += "var NL_LOCALE='" + localeName + "';";
     jsSnippet += "var NL_COMPDATA='" + string(NEU_COMPILATION_DATA) + "';";
+    jsSnippet += "var NL_SINGLE_INSTANCE_OWNER=" + string(singleInstanceOwner ? "true" : "false") + ";";
 
     json jGlobalVariables = settings::getOptionForCurrentMode("globalVariables");
     if(!jGlobalVariables.is_null()) {
@@ -209,6 +211,10 @@ string getGlobalVars(){
         }
     }
     return jsSnippet;
+}
+
+void setSingleInstanceOwner(bool owner) {
+    singleInstanceOwner = owner;
 }
 
 settings::CliArg _parseArg(const string &argStr) {

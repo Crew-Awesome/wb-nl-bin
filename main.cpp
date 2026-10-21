@@ -1,10 +1,13 @@
 #include <cstdlib>
 #include <csignal>
+#include <cctype>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <chrono>
 #if defined(_WIN32)
 #include <winsock2.h>
+#include <windows.h>
 #include <websocketpp/error.hpp>
 #endif
 
@@ -37,6 +40,98 @@ using json = nlohmann::json;
 
 string navigationUrl = "";
 
+#if defined(_WIN32)
+HANDLE weekboxInstanceMutex = nullptr;
+
+string __getWeekboxLink(const json &args) {
+    for(const auto &value: args) {
+        if(!value.is_string()) {
+            continue;
+        }
+        string argument = value.get<string>();
+        while(argument.size() >= 2 && argument.front() == '"' && argument.back() == '"') {
+            argument = argument.substr(1, argument.size() - 2);
+        }
+        string prefix = argument.size() > 8 ? argument.substr(0, 8) : argument;
+        for(char &character: prefix) {
+            character = static_cast<char>(tolower(static_cast<unsigned char>(character)));
+        }
+        if(prefix == "weekbox:") {
+            return argument;
+        }
+    }
+    return "";
+}
+
+bool __writeWeekboxHandoff(const string &link) {
+    json singleInstance = settings::getConfig().value("singleInstance", json::object());
+    string handoffFile = singleInstance.value("handoffFile", "/weekbox-deeplink.json");
+    if(handoffFile.empty()) {
+        return false;
+    }
+    if(handoffFile.front() != '/' && handoffFile.front() != '\\') {
+        handoffFile.insert(handoffFile.begin(), '/');
+    }
+
+    json payload = {
+        {"link", link.empty() ? json(nullptr) : json(link)},
+        {"timestamp", chrono::duration_cast<chrono::milliseconds>(
+            chrono::system_clock::now().time_since_epoch()).count()}
+    };
+    string handoffPath = settings::joinAppDataPath(handoffFile);
+    string tempPath = handoffPath + "." + to_string(GetCurrentProcessId()) + ".tmp";
+    ofstream writer(
+        CONVSTR(tempPath),
+        ios::binary | ios::trunc);
+    if(!writer) {
+        return false;
+    }
+    writer << payload.dump();
+    writer.close();
+    if(!writer.good()) {
+        DeleteFileW(CONVSTR(tempPath).c_str());
+        return false;
+    }
+    if(!MoveFileExW(
+        CONVSTR(tempPath).c_str(),
+        CONVSTR(handoffPath).c_str(),
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(CONVSTR(tempPath).c_str());
+        return false;
+    }
+    return true;
+}
+
+bool __claimWeekboxInstance(const json &args) {
+    json singleInstance = settings::getConfig().value("singleInstance", json::object());
+    if(!singleInstance.value("enabled", false) || settings::getAppId() != "com.weekbox.app") {
+        return true;
+    }
+
+    weekboxInstanceMutex = CreateMutexW(nullptr, TRUE, L"Global\\WeekBox-com.weekbox.app");
+    if(!weekboxInstanceMutex) {
+        return true;
+    }
+    if(GetLastError() == ERROR_ALREADY_EXISTS) {
+        bool handedOff = __writeWeekboxHandoff(__getWeekboxLink(args));
+        CloseHandle(weekboxInstanceMutex);
+        weekboxInstanceMutex = nullptr;
+        return !handedOff;
+    }
+    settings::setSingleInstanceOwner(true);
+    return true;
+}
+
+void __releaseWeekboxInstance() {
+    if(!weekboxInstanceMutex) {
+        return;
+    }
+    ReleaseMutex(weekboxInstanceMutex);
+    CloseHandle(weekboxInstanceMutex);
+    weekboxInstanceMutex = nullptr;
+}
+#endif
+
 void __wait() {
     while(true) {
         this_thread::sleep_for(chrono::milliseconds(NEU_APP_WAIT_INTERVAL_MS));
@@ -45,6 +140,9 @@ void __wait() {
 
 void __cleanup() {
     os::cleanupTray();
+    #if defined(_WIN32)
+    __releaseWeekboxInstance();
+    #endif
 }
 
 void __signalHandler(int signal) {
@@ -250,6 +348,11 @@ int main(int argc, char ** argv)
     __attachConsole();
     #endif
     __initFramework(args);
+    #if defined(_WIN32)
+    if(!__claimWeekboxInstance(args)) {
+        return 0;
+    }
+    #endif
     #if defined(_WIN32)
     helpers::setProcessName(settings::getProcessName());
     #else

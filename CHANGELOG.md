@@ -6,6 +6,11 @@ rename `Unreleased` topic with the new version tag. Finally, create a new `Unrel
 
 ## Unreleased
 
+## v6.10.11
+
+### Fixed
+- WeekBox protocol launches now hand off before the native WebView is created, preventing a duplicate window from flashing and closing.
+
 ## v6.10.0
 
 ### Security: Shell command allow list

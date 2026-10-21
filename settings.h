@@ -53,6 +53,7 @@ string getProcessName();
 bool isAppPathWritable();
 string getNavigationUrl();
 string getGlobalVars();
+void setSingleInstanceOwner(bool owner);
 void setGlobalArgs(const json &args);
 string joinAppPath(const string &filename);
 string joinSystemDataPath(const string &filename);

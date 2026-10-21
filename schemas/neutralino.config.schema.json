@@ -139,6 +139,20 @@
       "description": "Unique string to identify your application. \n Eg: js.neutralino.sample",
       "pattern": "^[a-zA-Z0-9]+(\\.[a-zA-Z0-9]+)*$"
     },
+    "singleInstance": {
+      "type": "object",
+      "description": "Optional native single-instance handoff configuration.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "handoffFile": {
+          "type": "string",
+          "default": "/weekbox-deeplink.json"
+        }
+      }
+    },
     "version": {
       "type": "string",
       "description": "Application version. \n Eg: 2.4.22"

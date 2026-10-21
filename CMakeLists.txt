@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-set(NEU_VERSION "6.10.0")
+set(NEU_VERSION "6.10.11")
 set(NEU_CXX_STANDARD 17)
 # Keep the runtime reusable while allowing branded distributions (WeekBox
 # uses -DNEU_BINARY_NAME=weekbox in its release build).
