@@ -9,7 +9,7 @@ env:
     git clone https://github.com/neutralinojs/neutralino.js.git
     cd neutralino.js
     npm ci
-    cd ../neutralinojs
+    cd "$GITHUB_WORKSPACE"
     ./scripts/make_res_neu.sh
 
 jobs:
