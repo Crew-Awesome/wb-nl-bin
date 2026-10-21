@@ -27,7 +27,7 @@ string __getStatusCodeString(const errors::StatusCode code) {
         case errors::NE_OS_INVKNPT: return "NE_OS_INVKNPT";
         case errors::NE_OS_UNLTRAS: return "NE_OS_UNLTRAS";
         case errors::NE_OS_UNLTOUV: return "NE_OS_UNLTOUV";
-        case errors::NE_OS_CMDNALW: return "NE_OS_CMDNALW";
+        case errors::NE_OS_CMDNALW: return "NE_OS_CMDNALLW";
         // computer
         case errors::NE_CO_UNLTOSC: return "NE_CO_UNLTOSC";
         case errors::NE_CO_UNLTOMG: return "NE_CO_UNLTOMG";
