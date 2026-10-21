@@ -105,6 +105,15 @@ void __regiserCommandAllowList() {
 
 void __registerScopesLists() {
     json jScopes = settings::getOptionForCurrentMode("filesystemScopes");
+
+    // The documented config shape is filesystem.scopes. Keep accepting the
+    // legacy top-level option so existing applications do not lose access.
+    json filesystem = settings::getOptionForCurrentMode("filesystem");
+    if(filesystem.is_object() && filesystem.contains("scopes") &&
+            !filesystem["scopes"].is_null()) {
+        jScopes = filesystem["scopes"];
+    }
+
     if(jScopes.is_null())
         return;
 

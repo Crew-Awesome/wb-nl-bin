@@ -139,9 +139,11 @@ describe('app.spec: app namespace tests', () => {
         it('handles high load by broadcasting multiple events rapidly', async () => {
             runner.run(`
                 try {
+                    let broadcasts = [];
                     for (let i = 0; i < 1000; i++) {
-                        Neutralino.app.broadcast('testEvent' + i);
+                        broadcasts.push(Neutralino.app.broadcast('testEvent' + i));
                     }
+                    await Promise.all(broadcasts);
                     await __close('success');
                 } catch (err) {
                 await __close('failed');

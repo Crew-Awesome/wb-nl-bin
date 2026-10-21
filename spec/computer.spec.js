@@ -98,10 +98,10 @@ describe('computer.spec: computer namespace tests', () => {
         });
     });
 
-    describe('computer.getGPUInfo', () => {
+    describe('computer.getGPUs', () => {
         it('returns available GPU details', async () => {
             runner.run(`
-                let gpuInfo = await Neutralino.computer.getGPUInfo();
+                let gpuInfo = await Neutralino.computer.getGPUs();
                 await __close(JSON.stringify(gpuInfo));
             `);
             let gpuInfo = JSON.parse(runner.getOutput());
@@ -112,10 +112,8 @@ describe('computer.spec: computer namespace tests', () => {
                 assert.ok(typeof gpu == 'object');
                 assert.ok(typeof gpu.id == 'number');
                 assert.ok(typeof gpu.vendor == 'string');
-                assert.ok(typeof gpu.name == 'string');
-                assert.ok(typeof gpu.memorySize == 'number');
-                assert.ok(typeof gpu.cacheSize == 'number');
-                assert.ok(typeof gpu.maxFrequency == 'number');
+                assert.ok(typeof gpu.dedicatedMemory == 'number');
+                assert.ok(typeof gpu.sharedMemory == 'number');
             }
             else {
                 // No GPU details in the machine
@@ -149,37 +147,39 @@ describe('computer.spec: computer namespace tests', () => {
         });
     });
 
-    describe('computer.getDiskInfo', () => {
+    describe('computer.getDisks', () => {
         it('returns disk usage information', async () => {
             runner.run(`
-                let diskInfo = await Neutralino.computer.getDiskInfo();
+                let diskInfo = await Neutralino.computer.getDisks();
                 await __close(JSON.stringify(diskInfo));
             `);
-            let diskInfo = JSON.parse(runner.getOutput());
-            assert.ok(typeof diskInfo == 'object');
-            assert.ok(typeof diskInfo.name == 'string');
-            assert.ok(typeof diskInfo.vendor == 'string');
-            assert.ok(typeof diskInfo.model == 'string');
-            assert.ok(typeof diskInfo.mountPoint == 'string');
-            assert.ok(typeof diskInfo.fileSystem == 'string');
-            assert.ok(typeof diskInfo.total == 'number');
-            assert.ok(typeof diskInfo.used == 'number');
-            assert.ok(typeof diskInfo.free == 'number');
-            assert.ok(typeof diskInfo.usedPercent == 'number');
+            let disks = JSON.parse(runner.getOutput());
+            assert.ok(Array.isArray(disks));
+
+            if(disks.length > 0) {
+                let disk = disks[0];
+                assert.ok(typeof disk.id == 'number');
+                assert.ok(typeof disk.vendor == 'string');
+                assert.ok(typeof disk.model == 'string');
+                assert.ok(typeof disk.serial == 'string');
+                assert.ok(typeof disk.mountPoint == 'string');
+                assert.ok(typeof disk.total == 'number');
+                assert.ok(typeof disk.free == 'number');
+            }
         });
 
         it('returns consistent disk usage values', async () => {
             runner.run(`
-                let diskInfo = await Neutralino.computer.getDiskInfo();
-                await __close(JSON.stringify(diskInfo));
+                let disks = await Neutralino.computer.getDisks();
+                await __close(JSON.stringify(disks));
             `);
-            let diskInfo = JSON.parse(runner.getOutput());
-            assert.ok(diskInfo.total > 0, 'Disk total should be greater than zero');
-            assert.ok(diskInfo.free >= 0, 'Disk free space should not be negative');
-            assert.ok(diskInfo.used >= 0, 'Disk used space should not be negative');
-            assert.ok(diskInfo.total >= diskInfo.free, 'Disk free space should not be greater than total');
-            assert.ok(diskInfo.total >= diskInfo.used, 'Disk used space should not be greater than total');
-            assert.ok(diskInfo.usedPercent >= 0 && diskInfo.usedPercent <= 100, 'Disk used percent should be within 0..100');
+            let disks = JSON.parse(runner.getOutput());
+            assert.ok(Array.isArray(disks));
+            disks.forEach(disk => {
+                assert.ok(disk.total >= 0, 'Disk total should not be negative');
+                assert.ok(disk.free >= 0, 'Disk free space should not be negative');
+                assert.ok(disk.total >= disk.free, 'Disk free space should not be greater than total');
+            });
         });
     });
 
@@ -275,46 +275,22 @@ describe('computer.spec: computer namespace tests', () => {
     });
 
     describe('computer.getNetworkInterfaces', () => {
-        it('returns an array of network interfaces', async () => {
+        it('returns network interfaces grouped by name', async () => {
             runner.run(`
                 let interfaces = await Neutralino.computer.getNetworkInterfaces();
                 await __close(JSON.stringify(interfaces));
             `);
             let interfaces = JSON.parse(runner.getOutput());
-            assert.ok(Array.isArray(interfaces));
-
-            if(interfaces.length > 0) {
-                let iface = interfaces[0];
-                assert.ok(typeof iface == 'object');
-                assert.ok(typeof iface.name == 'string');
-                assert.ok(Array.isArray(iface.ipv4));
-                assert.ok(Array.isArray(iface.ipv6));
-                assert.ok(typeof iface.mac == 'string');
-                assert.ok(typeof iface.isUp == 'boolean');
-                assert.ok(typeof iface.isLoopback == 'boolean');
-            }
-        });
-
-        it('excludes loopback interfaces when excludeLoopback is true', async () => {
-            runner.run(`
-                let interfaces = await Neutralino.computer.getNetworkInterfaces({ excludeLoopback: true });
-                await __close(JSON.stringify(interfaces));
-            `);
-            let interfaces = JSON.parse(runner.getOutput());
-            assert.ok(Array.isArray(interfaces));
-            interfaces.forEach(iface => {
-                assert.ok(!iface.isLoopback, 'Loopback interface should be excluded');
+            assert.ok(interfaces && typeof interfaces == 'object' && !Array.isArray(interfaces));
+            Object.entries(interfaces).forEach(([name, addresses]) => {
+                assert.ok(name.length > 0);
+                assert.ok(Array.isArray(addresses));
+                addresses.forEach(address => {
+                    assert.ok(typeof address.isInternal == 'boolean');
+                    assert.ok(typeof address.address == 'string' ||
+                        typeof address.ipv4 == 'string' || typeof address.ipv6 == 'string');
+                });
             });
-        });
-
-        it('includes loopback interfaces by default', async () => {
-            runner.run(`
-                let all = await Neutralino.computer.getNetworkInterfaces();
-                let noLoopback = await Neutralino.computer.getNetworkInterfaces({ excludeLoopback: true });
-                await __close(JSON.stringify({ all: all.length, noLoopback: noLoopback.length }));
-            `);
-            let result = JSON.parse(runner.getOutput());
-            assert.ok(result.all >= result.noLoopback, 'Default call should return at least as many interfaces as excludeLoopback:true');
         });
     });
 

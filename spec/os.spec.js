@@ -442,17 +442,17 @@ describe('os.spec: os namespace tests', () => {
         });
     });
 
-    describe('os.getLocale', () => {
+    describe('os.getLocaleInfo', () => {
         it('exports the function to the app', async () => {
             runner.run(`
-                await __close(typeof Neutralino.os.getLocale);
+                await __close(typeof Neutralino.os.getLocaleInfo);
             `);
             assert.equal(runner.getOutput(), 'function');
         });
 
         it('returns locale information', async () => {
             runner.run(`
-                let info = await Neutralino.os.getLocale();
+                let info = await Neutralino.os.getLocaleInfo();
                 await __close(JSON.stringify(info));
             `);
             let info = JSON.parse(runner.getOutput());

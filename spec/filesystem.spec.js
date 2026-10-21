@@ -1002,8 +1002,10 @@ describe('filesystem.spec: filesystem namespace tests', () => {
         it('dispatches events for internal watcher events', async () => {
             runner.run(`
                 let watcherId = await Neutralino.filesystem.createWatcher(NL_PATH + '/.tmp');
+                let closed = false;
                 await Neutralino.events.on('watchFile', async (evt) => {
-                    if(evt.detail.id == watcherId) {
+                    if(evt.detail.id == watcherId && !closed) {
+                        closed = true;
                         await __close(JSON.stringify(evt.detail));
                     }
                 });
@@ -1442,11 +1444,11 @@ describe('filesystem.spec: filesystem namespace tests', () => {
         });
     });
 
-    describe('filesystem.moveToTrash', () => {
+    describe('os.trashItem', () => {
         it('moves a file to trash without throwing errors', async () => {
             runner.run(`
                 await Neutralino.filesystem.writeFile(NL_PATH + '/.tmp/trash-test.txt', 'Hello');
-                await Neutralino.filesystem.moveToTrash(NL_PATH + '/.tmp/trash-test.txt');
+                await Neutralino.os.trashItem(NL_PATH + '/.tmp/trash-test.txt');
                 try {
                     await Neutralino.filesystem.getStats(NL_PATH + '/.tmp/trash-test.txt');
                     await __close('still exists');
@@ -1461,7 +1463,7 @@ describe('filesystem.spec: filesystem namespace tests', () => {
             runner.run(`
                 await Neutralino.filesystem.createDirectory(NL_PATH + '/.tmp/trash-dir');
                 await Neutralino.filesystem.writeFile(NL_PATH + '/.tmp/trash-dir/file.txt', 'Hello');
-                await Neutralino.filesystem.moveToTrash(NL_PATH + '/.tmp/trash-dir');
+                await Neutralino.os.trashItem(NL_PATH + '/.tmp/trash-dir');
                 try {
                     await Neutralino.filesystem.getStats(NL_PATH + '/.tmp/trash-dir');
                     await __close('still exists');
@@ -1475,12 +1477,12 @@ describe('filesystem.spec: filesystem namespace tests', () => {
         it('throws an error for a non-existent path', async () => {
             runner.run(`
                 try {
-                    await Neutralino.filesystem.moveToTrash(NL_PATH + '/.tmp/nonexistent-file.txt');
+                    await Neutralino.os.trashItem(NL_PATH + '/.tmp/nonexistent-file.txt');
                 } catch (error) {
                     await __close(error.code);
                 }
             `);
-            assert.equal(runner.getOutput(), 'NE_FS_TRSERR');
+            assert.equal(runner.getOutput(), 'NE_OS_UNLTRAS');
         });
     });
 

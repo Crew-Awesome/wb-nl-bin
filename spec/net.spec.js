@@ -16,7 +16,7 @@ describe('net.spec: network namespace tests', () => {
                     }
                 };
                 const response = await Neutralino.net.get('${BASE_URL}/get', options);
-                const data = JSON.parse(response.text);
+                const data = JSON.parse(response.body);
                 await __close(JSON.stringify(data.args.name));
             `);
             const result = JSON.parse(runner.getOutput());
@@ -39,7 +39,7 @@ describe('net.spec: network namespace tests', () => {
                     body: JSON.stringify(testData)
                 };
                 const response = await Neutralino.net.post('${BASE_URL}/post', options);
-                const data = JSON.parse(response.text);
+                const data = JSON.parse(response.body);
                 await __close(JSON.stringify(data.json));
             `);
             const json = JSON.parse(runner.getOutput());
@@ -56,7 +56,7 @@ describe('net.spec: network namespace tests', () => {
                     body: 'username=john_doe&password=pass123'
                 };
                 const response = await Neutralino.net.post('${BASE_URL}/post', options);
-                const data = JSON.parse(response.text);
+                const data = JSON.parse(response.body);
                 await __close(JSON.stringify(data.form.username));
             `);
             const result = JSON.parse(runner.getOutput());
@@ -78,7 +78,7 @@ describe('net.spec: network namespace tests', () => {
                     body: JSON.stringify(testData)
                 };
                 const response = await Neutralino.net.put('${BASE_URL}/put', options);
-                const data = JSON.parse(response.text);
+                const data = JSON.parse(response.body);
                 await __close(JSON.stringify(data.json));
             `);
             const json = JSON.parse(runner.getOutput());
@@ -88,7 +88,7 @@ describe('net.spec: network namespace tests', () => {
         });
     });
 
-    describe('net.del', () => {
+    describe('net.delete', () => {
         it('sends DELETE data correctly', async () => {
             runner.run(`
                 const testData = { id: 123, reason: 'For testing' };
@@ -96,8 +96,8 @@ describe('net.spec: network namespace tests', () => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(testData)
                 };
-                const response = await Neutralino.net.del('${BASE_URL}/delete', options);
-                const data = JSON.parse(response.text);
+                const response = await Neutralino.net.delete('${BASE_URL}/delete', options);
+                const data = JSON.parse(response.body);
                 await __close(JSON.stringify(data.json));
             `);
             const json = JSON.parse(runner.getOutput());
@@ -115,7 +115,7 @@ describe('net.spec: network namespace tests', () => {
                     body: JSON.stringify(testData)
                 };
                 const response = await Neutralino.net.patch('${BASE_URL}/patch', options);
-                const data = JSON.parse(response.text);
+                const data = JSON.parse(response.body);
                 await __close(JSON.stringify(data.json));
             `);
             const json = JSON.parse(runner.getOutput());
@@ -129,7 +129,7 @@ describe('net.spec: network namespace tests', () => {
             runner.run(`
                 const response = await Neutralino.net.head('${BASE_URL}/get');
                 const hasHeaders = response.headers && Object.keys(response.headers).length > 0;
-                const bodyIsEmpty = !response.text || response.text === '';
+                const bodyIsEmpty = !response.body || response.body === '';
                 await __close(JSON.stringify({ hasHeaders, bodyIsEmpty }));
             `);
             const result = JSON.parse(runner.getOutput());
@@ -154,9 +154,9 @@ describe('net.spec: network namespace tests', () => {
             runner.run(`
                 try {
                     const response = await Neutralino.net.get('${BASE_URL}/status/404');
-                    await __close(JSON.stringify(response.statusCode));
+                    await __close(JSON.stringify(response.status));
                 } catch (err) {
-                    await __close(JSON.stringify(err.statusCode || err.code || '404'));
+                    await __close(JSON.stringify(err.status || err.code || '404'));
                 }
             `);
             const output = runner.getOutput();
@@ -176,7 +176,7 @@ describe('net.spec: network namespace tests', () => {
                     }
                 };
                 const response = await Neutralino.net.get('${BASE_URL}/basic-auth/${authUser}/${authPass}', options);
-                await __close(JSON.stringify(response.statusCode));
+                await __close(JSON.stringify(response.status));
             `);
             assert.equal(JSON.parse(runner.getOutput()), 200);
         });
@@ -198,9 +198,9 @@ describe('net.spec: network namespace tests', () => {
         it('returns correct response fields', async () => {
             runner.run(`
                 const response = await Neutralino.net.get('${BASE_URL}/get');
-                const hasAllFields = response.statusCode !== undefined &&
-                                    response.text !== undefined &&
-                                    response.reason !== undefined &&
+                const hasAllFields = response.status !== undefined &&
+                                    response.body !== undefined &&
+                                    response.statusText !== undefined &&
                                     response.headers !== undefined &&
                                     response.cookies !== undefined &&
                                     response.version !== undefined;

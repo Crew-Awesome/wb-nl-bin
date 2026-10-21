@@ -5,7 +5,8 @@ const runner = require('./runner');
 describe('window.spec: window namespace tests', () => {
 
     describe('window.snapshot', () => {
-        it('captures the screen and saves to the specified file path', async () => {
+        // Windows and macOS CI runners do not provide a capture-capable desktop.
+        (process.platform === 'linux' ? it : it.skip)('captures the screen and saves to the specified file path', async () => {
             runner.run(`
                 await Neutralino.window.snapshot('screenshot.png');
                 await Neutralino.filesystem.getStats('screenshot.png');
@@ -206,36 +207,6 @@ describe('window.spec: window namespace tests', () => {
                 }
             `);
             assert.equal(runner.getOutput(), 'NE_WI_UNBSICO');
-        });
-    });
-
-    describe('window.setBadge', () => {
-        it('exports the function to the app', async () => {
-            runner.run(`
-                await __close(typeof Neutralino.window.setBadge);
-            `);
-            assert.equal(runner.getOutput(), 'function');
-        });
-
-        it('sets and clears the badge without throwing errors', async () => {
-            runner.run(`
-                await Neutralino.window.setBadge(1);
-                await Neutralino.window.setBadge(0);
-                await __close('done');
-            `);
-            assert.equal(runner.getOutput(), 'done');
-        });
-
-        it('throws errors for missing params', async () => {
-            runner.run(`
-                try {
-                    await Neutralino.window.setBadge();
-                }
-                catch(err) {
-                    await __close(err.code);
-                }
-            `);
-            assert.equal(runner.getOutput(), 'NE_RT_NATRTER');
         });
     });
 

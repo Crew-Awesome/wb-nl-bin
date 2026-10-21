@@ -42,6 +42,7 @@ using json = nlohmann::json;
 
 map<int, ifstream*> openedFiles;
 mutex openedFilesLock;
+mutex fileWriteLock;
 efsw::FileWatcher* fileWatcher;
 map<efsw::WatchID, pair<efsw::FileWatchListener*, string>> watchListeners;
 mutex watcherLock;
@@ -183,6 +184,7 @@ fs::FileReaderResult readFile(const string &filename, const fs::FileReaderOption
 }
 
 bool writeFile(const fs::FileWriterOptions &fileWriterOptions) {
+    lock_guard<mutex> guard(fileWriteLock);
     json output;
     ios_base::openmode mode = ios_base::out | ios_base::binary;
     // For portability we use LF ('\n') always via ::binary
