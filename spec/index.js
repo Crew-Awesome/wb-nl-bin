@@ -2,16 +2,21 @@ const Mocha = require('mocha');
 const fs = require('fs');
 const path = require('path');
 
-let mocha = new Mocha();
-let testDir = '.';
-let specModule = process.argv.length > 2 ? process.argv[2] : '';
+const mocha = new Mocha();
+const testDir = '.';
+const specModule = process.argv[2] || '';
+const specFiles = fs.readdirSync(testDir)
+    .filter((file) => file.endsWith('.spec.js'))
+    .filter((file) => !specModule || file === `${specModule}.spec.js`);
 
-fs.readdirSync(testDir).filter((file) => file.includes(specModule + '.spec.js'))
-.forEach((file) => {
-      mocha.addFile(path.join(testDir, file));
-
-});
-mocha.timeout(20000);
-mocha.run((failures) => {
-    process.exitCode = failures ? 1 : 0;
-});
+if(specFiles.length === 0) {
+    console.error(`No spec found for "${specModule}"`);
+    process.exitCode = 1;
+}
+else {
+    specFiles.forEach((file) => mocha.addFile(path.join(testDir, file)));
+    mocha.timeout(20000);
+    mocha.run((failures) => {
+        process.exitCode = failures ? 1 : 0;
+    });
+}

@@ -327,7 +327,8 @@ describe('filesystem.spec: filesystem namespace tests', () => {
                 let arrayBuffer = await Neutralino.filesystem.readBinaryFile(NL_PATH + '/.tmp/concurrent.bin');
                 await __close(new Uint8Array(arrayBuffer).toString());
             `);
-            assert(runner.getOutput() == '65,66' || runner.getOutput() == '66,65'); 
+            const output = runner.getOutput();
+            assert(output == '65,66' || output == '66,65');
         });
     });
 

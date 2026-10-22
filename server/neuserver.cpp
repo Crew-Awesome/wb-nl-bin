@@ -734,13 +734,11 @@ void stopIO() {
 }
 
 void waitForNativeWorkers() {
-    {
-        unique_lock<mutex> lock(nativeRequestMutex);
-        nativeIdleCondition.wait(lock, []() {
-            return activeNativeRequests == 0;
-        });
-    }
-
+    // A worker can be waiting for its response callback to run on the IO
+    // thread. Waiting for activeNativeRequests here before stopping IO can
+    // deadlock shutdown: the callback is the thing that decrements that
+    // counter. Joining the workers is sufficient; each worker has finished
+    // its native call before it can be joined.
     for(auto &worker: nativeWorkers) {
         if(worker.joinable()) {
             worker.join();

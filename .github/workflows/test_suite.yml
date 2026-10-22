@@ -15,6 +15,7 @@ env:
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     
     strategy:
       matrix:
@@ -99,6 +100,7 @@ jobs:
 
     - name: Run Spec
       if: ${{ matrix.arch == 'amd64' }}
+      timeout-minutes: 10
       working-directory: ./spec
       run: |
         npm ci
@@ -107,6 +109,7 @@ jobs:
 
   build-windows:
     runs-on: windows-2025
+    timeout-minutes: 15
     steps:
     - name: Checkout
       uses: actions/checkout@v3
@@ -133,6 +136,7 @@ jobs:
       run: npm ci
 
     - name: Run Spec
+      timeout-minutes: 10
       working-directory: ./spec
       run: |
         npm ci
@@ -140,6 +144,7 @@ jobs:
 
   build-darwin:
     runs-on: macos-15
+    timeout-minutes: 15
     steps:
     - name: Checkout
       uses: actions/checkout@v3
@@ -162,6 +167,7 @@ jobs:
       run: npm ci
 
     - name: Run Spec
+      timeout-minutes: 10
       working-directory: ./spec
       run: |
         npm ci
