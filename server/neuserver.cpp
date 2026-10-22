@@ -52,9 +52,9 @@ bool ioStopRequested = false;
 // Native calls are deliberately decoupled from the WebSocket IO loop. The
 // limits are part of the transport contract: they provide bounded memory and
 // TCP backpressure instead of letting promises accumulate indefinitely.
-constexpr size_t MAX_NATIVE_REQUESTS = 256;
-constexpr size_t MAX_NATIVE_REQUESTS_PER_CONNECTION = 64;
-constexpr size_t RESUME_NATIVE_REQUESTS_PER_CONNECTION = 16;
+constexpr size_t MAX_NATIVE_REQUESTS = 2048;
+constexpr size_t MAX_NATIVE_REQUESTS_PER_CONNECTION = 1024;
+constexpr size_t RESUME_NATIVE_REQUESTS_PER_CONNECTION = 256;
 constexpr size_t MAX_NATIVE_PAYLOAD_BYTES = 16 * 1024 * 1024;
 constexpr size_t MAX_NATIVE_RESPONSE_BYTES = 16 * 1024 * 1024;
 constexpr size_t MAX_NATIVE_RESPONSE_QUEUE_BYTES = 16 * 1024 * 1024;
@@ -84,12 +84,10 @@ size_t pendingNativeResponseBytes = 0;
 condition_variable nativeResponseCondition;
 vector<thread> nativeWorkers;
 thread serverThread;
-condition_variable nativeIdleCondition;
 mutex windowOrderMutex;
 condition_variable windowOrderCondition;
 uint64_t nextWindowSequence = 0;
 uint64_t windowSequenceToExecute = 0;
-size_t activeNativeRequests = 0;
 bool workersStarted = false;
 bool acceptingRequests = false;
 atomic<bool> stopping(false);
@@ -295,9 +293,6 @@ void __finishNativeRequest(
             }
         }
 
-        if(activeNativeRequests > 0) {
-            --activeNativeRequests;
-        }
     }
 
     if(shouldResume) {
@@ -313,7 +308,6 @@ void __finishNativeRequest(
             }
         });
     }
-    nativeIdleCondition.notify_all();
 }
 
 void __sendError(const websocketpp::connection_hdl &handler,
@@ -389,7 +383,6 @@ void __nativeWorkerLoop(size_t workerIndex) {
             }
             task = std::move(nativeRequestQueue.front());
             nativeRequestQueue.pop_front();
-            ++activeNativeRequests;
         }
 
         router::NativeMessage response;
@@ -735,7 +728,7 @@ void stopIO() {
 
 void waitForNativeWorkers() {
     // A worker can be waiting for its response callback to run on the IO
-    // thread. Waiting for activeNativeRequests here before stopping IO can
+    // thread. Waiting for response accounting here before stopping IO can
     // deadlock shutdown: the callback is the thing that decrements that
     // counter. Joining the workers is sufficient; each worker has finished
     // its native call before it can be joined.

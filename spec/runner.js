@@ -31,9 +31,7 @@ async function __close(data = "", exitCode = 0) {
     __closed = true;
     clearTimeout(__maxTimeout);
     try {
-        if(data) {
-            await Neutralino.filesystem.writeFile(NL_PATH + "/.tmp/output.txt", data);
-        }
+        await Neutralino.filesystem.writeFile(NL_PATH + "/.tmp/output.txt", data);
     }
     finally {
         setTimeout(() => Neutralino.app.exit(exitCode), ${APP_EXIT_DELAY_MS});
@@ -65,17 +63,17 @@ let activeRun = null;
 function run(code, options = {}) {
     cleanup();
     activeRun = createRunDirectory();
-    const sourceFile = path.join(activeRun, 'resources/js/main_spec.js');
+    const sourceFile = path.join(activeRun.appPath, 'resources/js/main_spec.js');
     fs.writeFileSync(sourceFile, makeAppSource(code, options.beforeInitCode));
 
     if(options.debug) {
-        console.log('INFO: Running the app from ' + activeRun);
+        console.log('INFO: Running the app from ' + activeRun.appPath);
     }
 
     let exitCode = 0;
-    const pidFile = path.join(activeRun, 'app.pid');
+    const pidFile = path.join(activeRun.rootPath, 'app.pid');
     try {
-        const command = makeCommand(options.args, activeRun);
+        const command = makeCommand(options.args);
         if(options.debug) {
             console.log('INFO: Running command: ' + command.binary + ' ' + command.args.join(' '));
         }
@@ -85,7 +83,8 @@ function run(code, options = {}) {
             JSON.stringify({
                 binary: command.binary,
                 args: command.args,
-                pidFile
+                pidFile,
+                cwd: activeRun.cwd
             })
         ], {
             detached: process.platform !== 'win32',
@@ -119,7 +118,7 @@ function run(code, options = {}) {
 function getOutput() {
     if(!activeRun) return '';
 
-    const outputFile = path.join(activeRun, '.tmp/output.txt');
+    const outputFile = path.join(activeRun.appPath, '.tmp/output.txt');
     let content = '';
     try {
         content = fs.readFileSync(outputFile, 'utf8');
@@ -130,7 +129,7 @@ function getOutput() {
     return content;
 }
 
-function makeCommand(optArgs = '', appPath) {
+function makeCommand(optArgs = '') {
     const binaryName = BINARY_NAMES[process.platform];
     if(!binaryName) {
         throw new Error(`Unsupported test platform: ${process.platform}`);
@@ -139,7 +138,7 @@ function makeCommand(optArgs = '', appPath) {
     return {
         binary: path.join(BIN_DIR, binaryName),
         args: [
-            `--path=${appPath}`,
+            '--path=../bin',
             '--load-dir-res',
             '--window-exit-process-on-close',
             '--url=/index_spec.html',
@@ -158,23 +157,26 @@ function splitArgs(value) {
 
 function createRunDirectory() {
     const runPath = fs.mkdtempSync(path.join(os.tmpdir(), 'neutralino-spec-'));
-    fs.cpSync(path.join(BIN_DIR, 'resources'), path.join(runPath, 'resources'), {
+    const appPath = path.join(runPath, 'bin');
+    const cwd = path.join(runPath, 'spec');
+    fs.mkdirSync(cwd);
+    fs.cpSync(path.join(BIN_DIR, 'resources'), path.join(appPath, 'resources'), {
         recursive: true
     });
-    fs.cpSync(path.join(BIN_DIR, 'extensions'), path.join(runPath, 'extensions'), {
+    fs.cpSync(path.join(BIN_DIR, 'extensions'), path.join(appPath, 'extensions'), {
         recursive: true
     });
     fs.copyFileSync(
         path.join(BIN_DIR, 'neutralino.config.json'),
-        path.join(runPath, 'neutralino.config.json')
+        path.join(appPath, 'neutralino.config.json')
     );
 
     for(const file of fs.readdirSync(BIN_DIR)) {
         if(file.endsWith('.config.json') && file !== 'neutralino.config.json') {
-            fs.copyFileSync(path.join(BIN_DIR, file), path.join(runPath, file));
+            fs.copyFileSync(path.join(BIN_DIR, file), path.join(appPath, file));
         }
     }
-    return runPath;
+    return { rootPath: runPath, appPath, cwd };
 }
 
 function killProcessTree(pid) {
@@ -215,6 +217,7 @@ function readPid(pidFile) {
 function runChild(serializedOptions) {
     const options = JSON.parse(serializedOptions);
     const child = spawn(options.binary, options.args, {
+        cwd: options.cwd,
         detached: process.platform !== 'win32',
         stdio: 'ignore',
         windowsHide: true
@@ -239,7 +242,7 @@ function makeAppSource(code, beforeInitCode = '') {
 function cleanup() {
     if(!activeRun) return;
 
-    const runPath = activeRun;
+    const runPath = activeRun.rootPath;
     activeRun = null;
     fs.rmSync(runPath, {
         recursive: true,
